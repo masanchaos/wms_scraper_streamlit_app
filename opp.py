@@ -5,7 +5,8 @@ import time
 import json
 import os
 from zoneinfo import ZoneInfo
-from streamlit_copy_button import copy_button # <--- [主要修改 1] 匯入新元件
+import streamlit.components.v1 as components
+import html
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -15,11 +16,53 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# 核心爬蟲與資料處理邏輯 (與前一版相同)
+# 新增：自訂的、零依賴的複製按鈕元件
 # =================================================================================
+def create_copy_button(text_to_copy: str, button_text: str, key: str):
+    escaped_text = html.escape(text_to_copy)
+    button_html = f"""
+    <html>
+    <head>
+        <style>
+            .copy-btn {{
+                display: inline-block; padding: 6px 12px; margin-top: 5px; font-size: 14px;
+                font-weight: 400; text-align: center; white-space: nowrap;
+                vertical-align: middle; cursor: pointer; border: 1px solid #ccc;
+                border-radius: 4px; color: #333; background-color: #fff; user-select: none;
+            }}
+            .copy-btn:hover {{ background-color: #f0f0f0; }}
+            .copy-btn:active {{ background-color: #e6e6e6; border-color: #adadad; }}
+        </style>
+    </head>
+    <body>
+        <div id="text-for-{key}" style="display: none;">{escaped_text}</div>
+        <button id="{key}" class="copy-btn">{button_text}</button>
+        <script>
+            document.getElementById("{key}").addEventListener("click", function() {{
+                const text = document.getElementById("text-for-{key}").textContent;
+                navigator.clipboard.writeText(text).then(() => {{
+                    const button = document.getElementById("{key}");
+                    const originalText = button.innerText;
+                    button.innerText = '已複製!';
+                    button.disabled = true;
+                    setTimeout(() => {{
+                        button.innerText = originalText;
+                        button.disabled = false;
+                    }}, 1500);
+                }}, (err) => {{
+                    console.error('無法複製文字: ', err);
+                }});
+            }});
+        </script>
+    </body>
+    </html>
+    """
+    return components.html(button_html, height=45)
 
+# =================================================================================
+# 核心爬蟲邏輯
+# =================================================================================
 class WmsScraper:
-    # ... WmsScraper class 的完整程式碼保持不變 ...
     def __init__(self, url, username, password, status_callback=None):
         self.url = url
         self.username = username
@@ -48,9 +91,7 @@ class WmsScraper:
         self._update_status("  > 尋找導覽菜單...")
         picking_management_xpath = "//a[@href='/admin/pickup']"
         try:
-            picking_management_button = WebDriverWait(driver, 30).until(
-                EC.element_to_be_clickable((By.XPATH, picking_management_xpath))
-            )
+            picking_management_button = WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath)))
             picking_management_button.click()
         except Exception as e:
             self._update_status("  > ❗️ 致命錯誤：無法找到或點擊導覽菜單。")
@@ -86,6 +127,7 @@ class WmsScraper:
                         all_data.append({"寄送方式": shipping_method, "主要運送代碼": tracking_code})
                 except Exception: continue
             try:
+                self._update_status(f"  > 第 {page_count} 頁抓取完畢，尋找下一頁按鈕...")
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button = driver.find_element(By.XPATH, next_button_xpath)
                 if next_button.get_attribute('disabled'):
@@ -126,7 +168,6 @@ class WmsScraper:
                 driver.quit()
 
 def generate_report_text(df_to_process, display_timestamp, report_title):
-    # ... (此函式保持不變) ...
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
         full_report = f"擷取時間: {display_timestamp} (台北時間)\n\n{summary}"
@@ -148,7 +189,6 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
     return summary_text, full_report_text
 
 def process_and_output_data(df, status_callback):
-    # ... (此函式保持不變) ...
     status_callback("  > 正在進行資料處理...")
     df['主要運送代碼'] = df['主要運送代碼'].astype(str)
     condition = (df['寄送方式'] == '7-11') & (df['主要運送代碼'].str.match(r'^\d', na=False))
@@ -169,29 +209,19 @@ def process_and_output_data(df, status_callback):
     st.session_state.final_df = df_sorted_all
     status_callback("✅ 資料處理完成，請查看下方報告。")
 
-# ... 憑證處理函式保持不變 ...
 CREDENTIALS_FILE = "credentials.json"
 def load_credentials():
     if os.path.exists(CREDENTIALS_FILE):
         try:
-            with open(CREDENTIALS_FILE, 'r') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            return {}
+            with open(CREDENTIALS_FILE, 'r') as f: return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError): return {}
     return {}
 def save_credentials(username, password):
-    with open(CREDENTIALS_FILE, 'w') as f:
-        json.dump({"username": username, "password": password}, f)
+    with open(CREDENTIALS_FILE, 'w') as f: json.dump({"username": username, "password": password}, f)
 def clear_credentials():
-    if os.path.exists(CREDENTIALS_FILE):
-        os.remove(CREDENTIALS_FILE)
-
-# =================================================================================
-# Streamlit 前端介面 (已更新)
-# =================================================================================
+    if os.path.exists(CREDENTIALS_FILE): os.remove(CREDENTIALS_FILE)
 
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
-
 if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
@@ -207,11 +237,9 @@ with st.sidebar:
     password = st.text_input("密碼", value=saved_password, type="password")
     remember_me = st.checkbox("記住我 (下次自動填入帳密)")
     st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
-    
 st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
-
 if start_button:
     if remember_me: save_credentials(username, password)
     else: clear_credentials()
@@ -235,65 +263,29 @@ if start_button:
             st.session_state.scraping_done = False
             status_area.error(f"❌ 執行時發生致命錯誤：")
             st.exception(e)
-
-# --- [主要修改處] 結果顯示區介面更新 ---
 if st.session_state.scraping_done:
     st.markdown("---")
     st.header("📊 擷取結果")
-    
     tab1, tab2, tab3 = st.tabs(["📊 指定項目報告", "📋 所有項目報告", "📝 全覽互動表格"])
-
     with tab1:
-        # 使用欄位佈局，讓標題和按鈕並排
         col1, col2 = st.columns([0.8, 0.2])
-        with col1:
-            st.subheader("指定項目統計與明細")
-        with col2:
-            copy_button(st.session_state.report_texts.get('filtered_full', ''), "複製此報告")
-        
-        # 保留文字區域，方便查看和手動複製
-        st.text_area(
-            "指定項目報告內容",
-            value=st.session_state.report_texts.get('filtered_full', '無資料'),
-            height=400,
-            label_visibility="collapsed"
-        )
-
+        with col1: st.subheader("指定項目統計與明細")
+        with col2: create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "複製此報告", key="copy-btn-filtered")
+        st.text_area("指定項目報告內容", value=st.session_state.report_texts.get('filtered_full', '無資料'), height=400, label_visibility="collapsed")
     with tab2:
         col1, col2 = st.columns([0.8, 0.2])
-        with col1:
-            st.subheader("所有項目統計與明細")
-        with col2:
-            copy_button(st.session_state.report_texts.get('all_full', ''), "複製此報告")
-            
-        st.text_area(
-            "所有項目報告內容",
-            value=st.session_state.report_texts.get('all_full', '無資料'),
-            height=400,
-            label_visibility="collapsed"
-        )
-    
+        with col1: st.subheader("所有項目統計與明細")
+        with col2: create_copy_button(st.session_state.report_texts.get('all_full', ''), "複製此報告", key="copy-btn-all")
+        st.text_area("所有項目報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=400, label_visibility="collapsed")
     with tab3:
         st.subheader("所有資料明細 (可排序)")
         st.dataframe(st.session_state.final_df)
-
     st.markdown("---")
     st.header("💾 下載檔案 (所有資料)")
-    
     col1, col2 = st.columns(2)
     with col1:
-        st.download_button(
-            label="下載 CSV 檔案", 
-            data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
-            file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", 
-            mime='text/csv', 
-            use_container_width=True
-        )
+        st.download_button(label="下載 CSV 檔案", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
+                          file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
     with col2:
-        st.download_button(
-            label="下載 TXT 檔案 (含摘要)", 
-            data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
-            file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", 
-            mime='text/plain', 
-            use_container_width=True
-        )
+        st.download_button(label="下載 TXT 檔案 (含摘要)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
+                          file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
