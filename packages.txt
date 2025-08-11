@@ -1,3 +1,2 @@
-# For Selenium to run on Streamlit Cloud
-chromium-browser
-chromium-chromedriver
+chromium
+chromium-driver
