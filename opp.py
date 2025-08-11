@@ -16,7 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# Custom Copy Button
+# 自訂複製按鈕
 # =================================================================================
 def create_copy_button(text_to_copy: str, button_text: str, key: str):
     escaped_text = html.escape(text_to_copy)
@@ -56,7 +56,7 @@ def create_copy_button(text_to_copy: str, button_text: str, key: str):
     return components.html(button_html, height=45)
 
 # =================================================================================
-# Core Scraper Logic
+# 核心爬蟲邏輯 (已擴充)
 # =================================================================================
 class WmsScraper:
     def __init__(self, status_callback=None):
@@ -156,30 +156,69 @@ class WmsScraper:
             driver.find_element(By.ID, "Password").send_keys(password)
             driver.find_element(By.XPATH, "//button[contains(text(), '登入')]").click()
             self._update_status("✅ [成功] 7-11 登入成功！")
+
             self._update_status("  > 正在輸入電話...")
             WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.ID, "CPhone"))).send_keys(phone_number)
             driver.find_element(By.ID, "btnCPhoneSend").click()
             self._update_status("✅ [成功] 電話輸入完成！")
+
             self._update_status("  > 準備開始逐筆輸入運送代碼...")
             code_input_xpath = "//input[@id='pcode']"
             confirm_button_xpath = "//button[@id='btnSave']"
             WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, code_input_xpath)))
             code_input = driver.find_element(By.XPATH, code_input_xpath)
             confirm_button = driver.find_element(By.XPATH, confirm_button_xpath)
+            
             total_codes = len(codes_to_process)
+            success_count = 0
             for i, code in enumerate(codes_to_process):
-                self._update_status(f"  > 正在處理第 {i+1}/{total_codes} 筆: {code}")
+                self._update_status(f"  > 處理中 ({i+1}/{total_codes}): {code}")
                 code_input.clear()
                 code_input.send_keys(code)
                 confirm_button.click()
-                time.sleep(0.5)
-            self._update_status(f"✅ [成功] {total_codes} 筆代碼已全部輸入！")
-            self._update_status("  > 正在點擊最終的「確認收件」按鈕...")
-            final_confirm_button_xpath = "//a[@id='btnConfrim']"
-            WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, final_confirm_button_xpath))).click()
+                
+                # --- [新功能] 智慧錯誤偵測 ---
+                try:
+                    # 短暫等待，看是否有錯誤彈窗出現
+                    error_modal_body_xpath = "//div[@class='modal-body']"
+                    error_element = WebDriverWait(driver, 2).until(
+                        EC.visibility_of_element_located((By.XPATH, error_modal_body_xpath))
+                    )
+                    error_text = error_element.text.strip()
+                    self._update_status(f"  > ❗️ 彈窗錯誤: '{code}' - {error_text}")
+                    
+                    # 嘗試關閉彈窗以繼續
+                    try:
+                        close_button = driver.find_element(By.XPATH, "//div[@class='modal-footer']/button")
+                        close_button.click()
+                        time.sleep(1)
+                    except Exception:
+                        self._update_status("  > ❗️ 無法自動關閉彈窗，處理中止。")
+                        break # 如果無法關閉，則停止
+                except TimeoutException:
+                    # 這是成功的狀況：沒有彈窗出現
+                    success_count += 1
+            
+            self._update_status(f"✅ [成功] {total_codes} 筆代碼已全部嘗試輸入！")
+            
+            if success_count > 0:
+                self._update_status("  > 正在點擊最終的「確認收件」按鈕...")
+                final_confirm_button_xpath = "//a[@id='btnConfrim']"
+                WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, final_confirm_button_xpath))).click()
+            
             self._update_status("🎉 [完成] 所有 7-11 訂單已處理完畢！")
+
+            # --- [新功能] 最終結果驗證 ---
+            verification_message = f"成功輸入 {success_count} / {total_codes} 筆資料。"
+            if success_count == total_codes:
+                verification_message += " 數量核對相符！"
+            else:
+                verification_message += f" 數量核對不符，有 {total_codes - success_count} 筆資料可能輸入失敗。"
+            self._update_status(f"✅ {verification_message}")
+
             time.sleep(5)
             return True
+
         except Exception as e:
             self._update_status(f"  > ❗️ 7-11 處理過程中發生錯誤: {e}")
             try:
@@ -190,6 +229,8 @@ class WmsScraper:
         finally:
             if driver: driver.quit()
 
+
+# ... 其他輔助函式 ...
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
@@ -213,7 +254,6 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
                       "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
                       f"{details_text}")
     return summary_text, full_report_text
-
 def process_and_output_data(df, status_callback):
     status_callback("  > 細分組...")
     df['主要運送代碼'] = df['主要運送代碼'].astype(str)
@@ -230,13 +270,15 @@ def process_and_output_data(df, status_callback):
     df_filtered = df_sorted_all[df_sorted_all['寄送方式'].isin(default_methods)]
     st.session_state.df_filtered = df_filtered
     st.session_state.final_df = df_sorted_all
-    seven_codes = df_sorted_all[df_sorted_all['寄送方式'].isin(['7-11', '711大物流'])]['主要運送代碼'].tolist()
+    
+    # [新功能] 只儲存 '7-11' 的運送代碼
+    seven_codes = df_sorted_all[df_sorted_all['寄送方式'] == '7-11']['主要運送代碼'].tolist()
     st.session_state.seven_eleven_codes = [code for code in seven_codes if code]
+
     st.session_state.report_texts['filtered_summary'], st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")
     st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     status_callback("✅ 資料處理完成！")
-
 CREDENTIALS_FILE_WMS = "credentials_wms.json"
 CREDENTIALS_FILE_711 = "credentials_711.json"
 def load_credentials(file_path):
@@ -251,12 +293,9 @@ def clear_credentials(file_path):
     if os.path.exists(file_path): os.remove(file_path)
 
 # =================================================================================
-# Streamlit UI
+# Streamlit 前端介面
 # =================================================================================
-
 st.set_page_config(page_title="WMS & 7-11 工具", page_icon="🚚", layout="wide")
-
-# --- [FIX] Initialize all session_state variables here ---
 if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
 if 'seven_eleven_codes' not in st.session_state: st.session_state.seven_eleven_codes = []
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
@@ -353,7 +392,7 @@ with tab2:
     if not st.session_state.seven_eleven_codes:
         st.info("請先在「WMS 資料擷取」分頁中成功擷取資料，才能啟用此功能。")
     else:
-        st.success(f"✅ 已從 WMS 系統載入 **{len(st.session_state.seven_eleven_codes)}** 筆 7-11 / 711大物流的運送代碼。")
+        st.success(f"✅ 已從 WMS 系統載入 **{len(st.session_state.seven_eleven_codes)}** 筆 **純 7-11** 的運送代碼。")
         st.text_area("待處理代碼預覽", value="\n".join(st.session_state.seven_eleven_codes), height=150)
         if st.button("🚀 開始處理 7-11 訂單", type="primary", use_container_width=True, disabled=not st.session_state.seven_eleven_codes):
             if seven_remember: save_credentials(CREDENTIALS_FILE_711, seven_username, seven_password)
@@ -368,7 +407,8 @@ with tab2:
                         scraper = WmsScraper(status_callback=seven_callback)
                         success = scraper.run_711_order_processing(seven_url, seven_username, seven_password, seven_phone, st.session_state.seven_eleven_codes)
                         if success:
-                            status_area_711.success("🎉 所有 7-11 訂單已成功處理！")
+                            # 成功訊息會由 scraper 內部回傳
+                            pass
                         else:
                             status_area_711.error("❌ 7-11 訂單處理失敗，請查看上方日誌或截圖。")
                 except Exception as e:
