@@ -15,7 +15,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
-# = a custom copy button function (code is hidden for brevity)
+# =================================================================================
+# 自訂的、零依賴的複製按鈕元件
+# =================================================================================
 def create_copy_button(text_to_copy: str, button_text: str, key: str):
     escaped_text = html.escape(text_to_copy)
     button_html = f"""
@@ -93,7 +95,7 @@ class WmsScraper:
         item_list_container_xpath = "//div[contains(@class, 'list-items')]"
         while True:
             self._update_status(f"  > 正在抓取第 {page_count} 頁的資料...")
-            time.sleep(1)
+            # 優化：移除非必要的固定等待
             current_page_rows = driver.find_elements(By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")
             if not current_page_rows:
                 self._update_status("  > 未在頁面中找到任何資料列，抓取結束。")
@@ -117,9 +119,9 @@ class WmsScraper:
                     self._update_status(f"  > 第 {page_count} 頁抓取完畢，點擊下一頁...")
                     driver.execute_script("arguments[0].click();", next_button)
                     page_count += 1
-                    self._update_status(f"  > 1/2 等待舊頁面資料消失...")
+                    self._update_status(f"  > 等待第 {page_count} 頁載入 (等待舊資料消失)...")
                     WebDriverWait(driver, 20).until(EC.staleness_of(current_page_rows[0]))
-                    self._update_status(f"  > 2/2 等待新頁面資料出現...")
+                    self._update_status(f"  > 等待第 {page_count} 頁載入 (等待新資料出現)...")
                     WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.XPATH, item_list_container_xpath)))
                     self._update_status(f"  > 第 {page_count} 頁載入成功。")
             except Exception:
@@ -149,21 +151,14 @@ class WmsScraper:
             if driver:
                 driver.quit()
 
-# =================================================================================
-# 資料處理與報告生成
-# =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
-    """輔助函式：產生包含優化排版和百分比的摘要和明細文字報告"""
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
         full_report = f"擷取時間: {display_timestamp} (台北時間)\n\n{summary}"
         return summary, full_report
-
     summary_df = df_to_process.groupby('寄送方式', observed=False).size().reset_index(name='數量')
     total_count = len(df_to_process)
-    
     max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
-    
     summary_lines = ["==============================", f"=== {report_title} ===", "=============================="]
     for _, row in summary_df.iterrows():
         if row['數量'] > 0:
@@ -173,13 +168,10 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
             percent_part = f"({percentage}%)"
             line = f"{method_part:<{max_len}} {count_part:>6}   {percent_part:>6}"
             summary_lines.append(line)
-            
     summary_lines.append("------------------------------")
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
-    
     details_text = df_to_process.to_string(index=False)
-    
     full_report_text = (f"擷取時間: {display_timestamp} (台北時間)\n\n{summary_text}\n\n"
                       "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
                       f"{details_text}")
@@ -200,10 +192,11 @@ def process_and_output_data(df, status_callback):
     df_sorted_all = df.sort_values(by='寄送方式')
     default_methods = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
     df_filtered = df_sorted_all[df_sorted_all['寄送方式'].isin(default_methods)]
+    st.session_state.df_filtered = df_filtered
+    st.session_state.final_df = df_sorted_all
     st.session_state.report_texts['filtered_summary'], st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")
     st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
-    st.session_state.final_df = df_sorted_all
     status_callback("✅ 資料處理完成，請查看下方報告。")
 
 CREDENTIALS_FILE = "credentials.json"
@@ -225,8 +218,8 @@ def clear_credentials():
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
 if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
+if 'df_filtered' not in st.session_state: st.session_state.df_filtered = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
-
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
@@ -238,7 +231,7 @@ with st.sidebar:
     password = st.text_input("密碼", value=saved_password, type="password")
     remember_me = st.checkbox("記住我 (下次自動填入帳密)")
     st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
-st.title("🚚 WMS 資料擷取工具")
+st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
 if start_button:
@@ -264,29 +257,62 @@ if start_button:
             st.session_state.scraping_done = False
             status_area.error(f"❌ 執行時發生致命錯誤：")
             st.exception(e)
+
 if st.session_state.scraping_done:
     st.markdown("---")
     st.header("📊 擷取結果")
-    tab1, tab2, tab3 = st.tabs(["📊 指定項目報告", "📋 所有項目報告", "📝 全覽互動表格"])
+    
+    # --- [最終 UI 設計] ---
+    tab1, tab2 = st.tabs(["📊 指定項目報告", "📋 所有項目報告"])
+
     with tab1:
-        col1, col2 = st.columns([0.8, 0.2])
-        with col1: st.subheader("指定項目統計與明細")
-        with col2: create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "複製此報告", key="copy-btn-filtered")
-        st.text_area("指定項目報告內容", value=st.session_state.report_texts.get('filtered_full', '無資料'), height=400, label_visibility="collapsed")
+        st.subheader("指定項目統計與明細")
+        st.text_area(
+            "指定項目報告內容 (可直接複製)",
+            value=st.session_state.report_texts.get('filtered_full', '無資料'),
+            height=500,
+            label_visibility="collapsed"
+        )
+        st.markdown("---")
+        # 將操作按鈕整合進分頁中
+        col1, col2 = st.columns(2)
+        with col1:
+            create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "一鍵複製此報告", key="copy-btn-filtered")
+        with col2:
+            st.download_button(
+                label="下載 CSV (僅指定項目)", 
+                data=st.session_state.df_filtered.to_csv(index=False, encoding='utf-8-sig'),
+                file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.csv", 
+                mime='text/csv', 
+                use_container_width=True
+            )
+
     with tab2:
-        col1, col2 = st.columns([0.8, 0.2])
-        with col1: st.subheader("所有項目統計與明細")
-        with col2: create_copy_button(st.session_state.report_texts.get('all_full', ''), "複製此報告", key="copy-btn-all")
-        st.text_area("所有項目報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=400, label_visibility="collapsed")
-    with tab3:
-        st.subheader("所有資料明細 (可排序)")
-        st.dataframe(st.session_state.final_df)
-    st.markdown("---")
-    st.header("💾 下載檔案 (所有資料)")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(label="下載 CSV 檔案", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
-                          file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
-    with col2:
-        st.download_button(label="下載 TXT 檔案 (含摘要)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
-                          file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
+        st.subheader("所有項目統計與明細")
+        st.text_area(
+            "所有項目報告內容 (可直接複製)",
+            value=st.session_state.report_texts.get('all_full', '無資料'),
+            height=500,
+            label_visibility="collapsed"
+        )
+        st.markdown("---")
+        # 將操作按鈕整合進分頁中
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            create_copy_button(st.session_state.report_texts.get('all_full', ''), "一鍵複製此報告", key="copy-btn-all")
+        with col2:
+            st.download_button(
+                label="下載 CSV (所有資料)", 
+                data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
+                file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", 
+                mime='text/csv', 
+                use_container_width=True
+            )
+        with col3:
+            st.download_button(
+                label="下載 TXT (所有資料)", 
+                data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
+                file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", 
+                mime='text/plain', 
+                use_container_width=True
+            )
