@@ -3,6 +3,8 @@ import pandas as pd
 import pyperclip
 import datetime
 import time
+import json
+import os
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -12,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# 核心爬蟲與資料處理邏輯
+# 核心爬蟲邏輯
 # =================================================================================
 
 class WmsScraper:
@@ -29,7 +31,6 @@ class WmsScraper:
     def _login(self, driver):
         self._update_status("  > 正在前往登入頁面...")
         driver.get(self.url)
-        # 登入頁面的 placeholder 是固定的，不受語言影響
         account_xpath = "//input[@placeholder='example@jenjan.com.tw']"
         password_xpath = "//input[@type='password']"
         account_input = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, account_xpath)))
@@ -46,12 +47,7 @@ class WmsScraper:
 
     def _navigate_to_picking_complete(self, driver):
         self._update_status("  > 尋找導覽菜單...")
-        
-        # --- [最終修正] ---
-        # 不再使用中文文字 `揀貨管理` 來定位
-        # 改用絕對不會變的連結 href="/admin/pickup"
         picking_management_xpath = "//a[@href='/admin/pickup']"
-        
         try:
             picking_management_button = WebDriverWait(driver, 30).until(
                 EC.element_to_be_clickable((By.XPATH, picking_management_xpath))
@@ -62,12 +58,10 @@ class WmsScraper:
             raise e
 
         self._update_status("  > 正在等待分頁區塊載入...")
-        # 讓程式同時識別中文或可能的英文("Unpicked Orders")
         default_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '未揀訂單') or contains(., 'Unpicked'))]"
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, default_tab_xpath)))
         
         self._update_status("  > 點擊「揀包完成」分頁按鈕...")
-        # 讓程式同時識別中文或可能的英文("Picking Complete")
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Complete'))]"
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
@@ -97,7 +91,6 @@ class WmsScraper:
                         all_data.append({"寄送方式": shipping_method, "主要運送代碼": tracking_code})
                 except Exception: continue
             try:
-                # 讓程式同時識別中文或可能的英文("Next")
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button = driver.find_element(By.XPATH, next_button_xpath)
                 if next_button.get_attribute('disabled'): break
@@ -133,90 +126,189 @@ class WmsScraper:
             if driver:
                 driver.quit()
 
-# ... generate_report_text 和 process_and_output_data 函式，以及 Streamlit UI 程式碼都保持不變 ...
+# =================================================================================
+# 資料處理與報告生成
+# =================================================================================
+
 def generate_report_text(df_to_process, display_timestamp, report_title):
+    """輔助函式：根據提供的 DataFrame 產生摘要和明細的文字報告"""
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
         full_report = f"擷取時間: {display_timestamp}\n\n{summary}"
         return summary, full_report
+
     summary_df = df_to_process.groupby('寄送方式', observed=False).size().reset_index(name='數量')
     total_count = len(df_to_process)
-    summary_lines = ["==============================", f"=== {report_title} ===", "=============================="]
+    
+    summary_lines = [
+        "==============================",
+        f"=== {report_title} ===",
+        "==============================",
+    ]
     for _, row in summary_df.iterrows():
         if row['數量'] > 0:
             summary_lines.append(f"{row['寄送方式']}: {row['數量']}")
     summary_lines.append("------------------------------")
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
+    
     details_text = df_to_process.to_string(index=False)
-    full_report_text = (f"擷取時間: {display_timestamp}\n\n{summary_text}\n\n"
-                      "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
-                      f"{details_text}")
+    
+    full_report_text = (
+        f"擷取時間: {display_timestamp}\n\n"
+        f"{summary_text}\n\n"
+        "=============================="
+        "======== 資 料 明 細 ========\n"
+        "==============================\n\n"
+        f"{details_text}"
+    )
     return summary_text, full_report_text
 
 def process_and_output_data(df, status_callback):
+    """主要處理函式：資料分類、排序、產生報告並儲存到 session state"""
     status_callback("  > 正在進行資料處理...")
+    
+    # 7-11 細分組
     df['主要運送代碼'] = df['主要運送代碼'].astype(str)
     condition = (df['寄送方式'] == '7-11') & (df['主要運送代碼'].str.match(r'^\d', na=False))
     df.loc[condition, '寄送方式'] = '711大物流'
     status_callback("  > ✅ 細分組完成。")
+
     now = datetime.datetime.now()
     display_timestamp = now.strftime("%Y-%m-%d %H:%M")
+    
+    # 自訂排序
     priority_order = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
     all_methods = df['寄送方式'].unique().tolist()
     final_order = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
     df['寄送方式'] = pd.Categorical(df['寄送方式'], categories=final_order, ordered=True)
     df_sorted_all = df.sort_values(by='寄送方式')
+
+    # 篩選預設項目
     default_methods = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
     df_filtered = df_sorted_all[df_sorted_all['寄送方式'].isin(default_methods)]
+    
+    # 產生報告並儲存到 session_state 供前端使用
     st.session_state.report_texts['filtered_summary'], st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")
     st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
+    
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     st.session_state.final_df = df_sorted_all
+    
+    # 自動複製預設項目
     try:
         pyperclip.copy(st.session_state.report_texts['filtered_full'])
         status_callback("✅ 預設項目已自動複製到剪貼簿！")
     except pyperclip.PyperclipException:
         status_callback("❗️ 自動複製到剪貼簿失敗。您的環境可能不支援此操作。")
 
+# =================================================================================
+# 憑證處理函式
+# =================================================================================
+CREDENTIALS_FILE = "credentials.json"
+
+def load_credentials():
+    """從伺服器上的檔案載入已儲存的帳號密碼"""
+    if os.path.exists(CREDENTIALS_FILE):
+        try:
+            with open(CREDENTIALS_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return {}
+    return {}
+
+def save_credentials(username, password):
+    """將帳號密碼儲存到伺服器上的檔案"""
+    with open(CREDENTIALS_FILE, 'w') as f:
+        json.dump({"username": username, "password": password}, f)
+
+def clear_credentials():
+    """從伺服器上刪除已儲存的帳號密碼檔案"""
+    if os.path.exists(CREDENTIALS_FILE):
+        os.remove(CREDENTIALS_FILE)
+
+
+# =================================================================================
+# Streamlit 前端介面
+# =================================================================================
+
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
-if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
-if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
-if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
+
+# --- 初始化 Session State ---
+if 'scraping_done' not in st.session_state:
+    st.session_state.scraping_done = False
+if 'final_df' not in st.session_state:
+    st.session_state.final_df = pd.DataFrame()
+if 'report_texts' not in st.session_state:
+    st.session_state.report_texts = {}
+
+# --- 側邊欄：設定區 ---
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
+    saved_creds = load_credentials()
+    saved_username = saved_creds.get("username", "")
+    saved_password = saved_creds.get("password", "")
     url = st.text_input("目標網頁 URL", value="https://wms.jenjan.com.tw/")
-    username = st.text_input("帳號", value="jeff02")
-    password = st.text_input("密碼", value="j93559091", type="password")
-    st.info("請確認設定無誤後，點擊主畫面的「開始擷取」按鈕。")
+    username = st.text_input("帳號", value=saved_username)
+    password = st.text_input("密碼", value=saved_password, type="password")
+    remember_me = st.checkbox("記住我 (下次自動填入帳密)")
+    st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
+    
 
+# --- 主頁面：標題與控制區 ---
 st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
+
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
 
 if start_button:
+    if remember_me:
+        save_credentials(username, password)
+    else:
+        clear_credentials()
+
     st.session_state.scraping_done = False
     status_area = st.empty()
     def streamlit_callback(message): status_area.info(message)
+
     with st.spinner("正在執行中，請勿關閉視窗..."):
         try:
-            scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
-            result_df = scraper.run()
-            if not result_df.empty:
-                process_and_output_data(result_df, streamlit_callback)
-                st.session_state.scraping_done = True
-                status_area.success("🎉 所有任務完成！請查看下方的結果。")
+            if not username or not password:
+                status_area.error("❌ 請務必輸入帳號和密碼！")
             else:
-                status_area.warning("⚠️ 抓取完成，但沒有收到任何資料。")
+                scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
+                result_df = scraper.run()
+                
+                if not result_df.empty:
+                    process_and_output_data(result_df, streamlit_callback)
+                    
+                    status_area.success("🎉 所有任務完成！您的 CSV 檔案已準備就緒。")
+                    
+                    # 立即顯示主要的下載按鈕
+                    st.download_button(
+                        label="📥 點此下載所有資料 (CSV)",
+                        data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
+                        file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv",
+                        mime='text/csv',
+                        type="primary",
+                        use_container_width=True
+                    )
+                    
+                    st.session_state.scraping_done = True
+                else:
+                    status_area.warning("⚠️ 抓取完成，但沒有收到任何資料。")
+
         except Exception as e:
             st.session_state.scraping_done = False
-            status_area.error("❌ 執行時發生致命錯誤：")
+            status_area.error(f"❌ 執行時發生致命錯誤：")
             st.exception(e)
 
+# --- 結果顯示區 ---
 if st.session_state.scraping_done:
     st.markdown("---")
-    st.header("📊 擷取結果")
+    st.header("📊 擷取結果與其他操作")
+    
     tab1, tab2 = st.tabs(["統計摘要", "資料明細"])
     with tab1:
         st.subheader("指定項目分組統計 (預設)")
@@ -226,8 +318,9 @@ if st.session_state.scraping_done:
     with tab2:
         st.subheader("所有資料明細 (已排序)")
         st.dataframe(st.session_state.final_df)
+        
     st.markdown("---")
-    st.header("🚀 操作按鈕")
+    st.header("🚀 其他操作")
     col1, col2 = st.columns(2)
     with col1:
         st.info("📋 複製到剪貼簿")
@@ -238,8 +331,11 @@ if st.session_state.scraping_done:
             pyperclip.copy(st.session_state.report_texts.get('all_full', ''))
             st.success("已複製所有項目內容！")
     with col2:
-        st.info("💾 下載檔案 (所有資料)")
-        st.download_button(label="下載 CSV 檔案", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
-                          file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
-        st.download_button(label="下載 TXT 檔案", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
-                          file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
+        st.info("💾 下載其他格式檔案")
+        st.download_button(
+            label="下載 TXT 檔案 (含摘要)",
+            data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
+            file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt",
+            mime='text/plain',
+            use_container_width=True
+        )
