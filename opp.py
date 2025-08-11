@@ -183,26 +183,20 @@ class AutomationTool:
             self._update_status("  > 登入成功，準備點擊「其他用戶」標籤...")
             time.sleep(3)
             
+            # --- [最終修正] ---
             other_user_tab_xpath = "//a[normalize-space()='其他用戶']"
-            
-            # --- [最終修正] 最穩健的「多重保險」點擊策略 ---
             wait = WebDriverWait(driver, 20)
-            self._update_status("  > (1/3) 等待「其他用戶」元素出現...")
+            
+            self._update_status("  > 等待「其他用戶」元素出現...")
             other_user_tab = wait.until(EC.presence_of_element_located((By.XPATH, other_user_tab_xpath)))
             
-            self._update_status("  > (2/3) 將按鈕滾動至可見區域...")
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", other_user_tab)
-            time.sleep(1)
-
-            self._update_status("  > (3/3) 等待「其他用戶」元素變為可點擊...")
-            wait.until(EC.element_to_be_clickable((By.XPATH, other_user_tab_xpath)))
-            
-            other_user_tab.click()
+            self._update_status("  > 使用 JavaScript 強制點擊...")
+            driver.execute_script("arguments[0].click();", other_user_tab)
             self._update_status("  > ✅ 「其他用戶」點擊成功！")
             
             self._update_status("  > 正在尋找 7-11 輸入框...")
             seven_eleven_textarea_xpath = "//textarea[@name='unimart']"
-            seven_eleven_textarea = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, seven_eleven_textarea_xpath)))
+            seven_eleven_textarea = wait.until(EC.element_to_be_clickable((By.XPATH, seven_eleven_textarea_xpath)))
             
             self._update_status(f"  > 找到輸入框，準備貼上 {len(codes_to_process)} 筆代碼...")
             codes_as_string = "\n".join(codes_to_process)
@@ -395,16 +389,10 @@ with main_tab2:
                         st.error("❌ 請務必在側邊欄設定中輸入蝦皮出貨快手的帳號和密碼！")
                     else:
                         tool = AutomationTool(status_callback=shoppy_callback)
-                        success, screenshots = tool.run_niceshoppy_automation(shoppy_url, shoppy_username, shoppy_password, st.session_state.seven_eleven_codes)
+                        success = tool.run_niceshoppy_automation(shoppy_url, shoppy_username, shoppy_password, st.session_state.seven_eleven_codes)
                         if success:
                             status_area_shoppy.success("🎉 蝦皮出貨快手任務已成功執行！")
                         else:
-                            status_area_shoppy.error("❌ 蝦皮出貨快手任務失敗，請查看下方偵錯截圖。")
-                            if screenshots:
-                                st.subheader("🕵️‍♂️ 偵錯截圖")
-                                st.warning("以下是程式失敗前的畫面，請依此判斷問題所在。")
-                                for img_path in screenshots:
-                                    if os.path.exists(img_path):
-                                        st.image(img_path, caption=os.path.basename(img_path))
+                            status_area_shoppy.error("❌ 蝦皮出貨快手任務失敗，請查看上方日誌或截圖。")
                 except Exception as e:
                     status_area_shoppy.error("❌ 執行蝦皮出貨快手任務時發生致命錯誤："); st.exception(e)
