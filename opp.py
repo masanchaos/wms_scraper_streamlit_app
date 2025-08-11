@@ -15,47 +15,24 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
-# =================================================================================
-# 新增：自訂的、零依賴的複製按鈕元件
-# =================================================================================
+# = a custom copy button function (code is hidden for brevity)
 def create_copy_button(text_to_copy: str, button_text: str, key: str):
     escaped_text = html.escape(text_to_copy)
     button_html = f"""
-    <html>
-    <head>
-        <style>
-            .copy-btn {{
-                display: inline-block; padding: 6px 12px; margin-top: 5px; font-size: 14px;
-                font-weight: 400; text-align: center; white-space: nowrap;
-                vertical-align: middle; cursor: pointer; border: 1px solid #ccc;
-                border-radius: 4px; color: #333; background-color: #fff; user-select: none;
-            }}
-            .copy-btn:hover {{ background-color: #f0f0f0; }}
-            .copy-btn:active {{ background-color: #e6e6e6; border-color: #adadad; }}
-        </style>
-    </head>
-    <body>
-        <div id="text-for-{key}" style="display: none;">{escaped_text}</div>
-        <button id="{key}" class="copy-btn">{button_text}</button>
+    <html><head><style>.copy-btn {{ display: inline-block; padding: 6px 12px; margin-top: 5px; font-size: 14px; font-weight: 400; text-align: center; white-space: nowrap; vertical-align: middle; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; color: #333; background-color: #fff; user-select: none; }}.copy-btn:hover {{ background-color: #f0f0f0; }}.copy-btn:active {{ background-color: #e6e6e6; border-color: #adadad; }}</style></head>
+    <body><div id="text-for-{key}" style="display: none;">{escaped_text}</div><button id="{key}" class="copy-btn">{button_text}</button>
         <script>
             document.getElementById("{key}").addEventListener("click", function() {{
                 const text = document.getElementById("text-for-{key}").textContent;
                 navigator.clipboard.writeText(text).then(() => {{
                     const button = document.getElementById("{key}");
                     const originalText = button.innerText;
-                    button.innerText = '已複製!';
-                    button.disabled = true;
-                    setTimeout(() => {{
-                        button.innerText = originalText;
-                        button.disabled = false;
-                    }}, 1500);
-                }}, (err) => {{
-                    console.error('無法複製文字: ', err);
-                }});
+                    button.innerText = '已複製!'; button.disabled = true;
+                    setTimeout(() => {{ button.innerText = originalText; button.disabled = false; }}, 1500);
+                }}, (err) => {{ console.error('無法複製文字: ', err); }});
             }});
         </script>
-    </body>
-    </html>
+    </body></html>
     """
     return components.html(button_html, height=45)
 
@@ -115,13 +92,19 @@ class WmsScraper:
         
         all_data = []
         page_count = 1
+        item_list_container_xpath = "//div[contains(@class, 'list-items')]"
+
         while True:
             self._update_status(f"  > 正在抓取第 {page_count} 頁的資料...")
-            time.sleep(1) # 短暫等待確保資料渲染
-            item_rows_xpath = "//div[contains(@class, 'list-items')]/div[contains(@class, 'item')]"
-            rows = driver.find_elements(By.XPATH, item_rows_xpath)
-            if not rows: break
-            for row in rows:
+            time.sleep(1) 
+            
+            # 抓取前，先定位當前頁面的資料列
+            current_page_rows = driver.find_elements(By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")
+            if not current_page_rows:
+                self._update_status("  > 未在頁面中找到任何資料列，抓取結束。")
+                break
+
+            for row in current_page_rows:
                 shipping_method, tracking_code = "", ""
                 try:
                     shipping_method = row.find_element(By.XPATH, "./div[2]/div[3]").text.strip()
@@ -131,10 +114,11 @@ class WmsScraper:
                         all_data.append({"寄送方式": shipping_method, "主要運送代碼": tracking_code})
                 except Exception: continue
             
-            # --- [最終修正] 使用最穩定的等待翻頁邏輯 ---
+            # --- [最終修正] 最穩健的翻頁邏輯 ---
             try:
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button = driver.find_element(By.XPATH, next_button_xpath)
+
                 if next_button.get_attribute('disabled'):
                     self._update_status("  > 「下一頁」按鈕已禁用，抓取結束。")
                     break
@@ -143,10 +127,15 @@ class WmsScraper:
                     driver.execute_script("arguments[0].click();", next_button)
                     page_count += 1
                     
-                    # 關鍵步驟：等待載入動畫消失，確保新頁面已完全載入
-                    self._update_status(f"  > 等待第 {page_count} 頁載入...")
-                    WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
+                    # 雙重等待機制
+                    self._update_status(f"  > 1/2 等待舊頁面資料消失...")
+                    WebDriverWait(driver, 20).until(EC.staleness_of(current_page_rows[0]))
+                    
+                    self._update_status(f"  > 2/2 等待新頁面資料出現...")
+                    WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.XPATH, item_list_container_xpath)))
+                    
                     self._update_status(f"  > 第 {page_count} 頁載入成功。")
+
             except Exception:
                 self._update_status("  > 未找到可點擊的「下一頁」按鈕，抓取結束。")
                 break
@@ -227,7 +216,6 @@ def save_credentials(username, password):
 def clear_credentials():
     if os.path.exists(CREDENTIALS_FILE): os.remove(CREDENTIALS_FILE)
 
-# ... Streamlit UI 程式碼保持不變 ...
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
 if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
@@ -242,7 +230,7 @@ with st.sidebar:
     username = st.text_input("帳號", value=saved_username)
     password = st.text_input("密碼", value=saved_password, type="password")
     remember_me = st.checkbox("記住我 (下次自動填入帳密)")
-    st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
+    st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺-服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
 st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
