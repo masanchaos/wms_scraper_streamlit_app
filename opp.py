@@ -14,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# 核心爬蟲邏輯
+# 核心爬蟲邏輯 (已整合雙語容錯功能)
 # =================================================================================
 
 class WmsScraper:
@@ -47,27 +47,36 @@ class WmsScraper:
 
     def _navigate_to_picking_complete(self, driver):
         self._update_status("  > 尋找導覽菜單...")
+        
+        # --- [最終修正] ---
+        # 核心修正：不再使用中文文字 `揀貨管理` 來定位
+        # 改用絕對不會因語言而變的連結 href="/admin/pickup"
         picking_management_xpath = "//a[@href='/admin/pickup']"
+        
         try:
+            # 延長等待時間以應對雲端延遲
             picking_management_button = WebDriverWait(driver, 30).until(
                 EC.element_to_be_clickable((By.XPATH, picking_management_xpath))
             )
             picking_management_button.click()
         except Exception as e:
-            self._update_status("  > ❗️ 致命錯誤：無法找到或點擊導覽菜單。")
+            self._update_status("  > ❗️ 致命錯誤：無法找到或點擊導覽菜單(href='/admin/pickup')。")
             raise e
 
         self._update_status("  > 正在等待分頁區塊載入...")
+        # 雙語容錯：讓程式同時識別中文或可能的英文("Unpicked")
         default_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '未揀訂單') or contains(., 'Unpicked'))]"
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, default_tab_xpath)))
         
         self._update_status("  > 點擊「揀包完成」分頁按鈕...")
+        # 雙語容錯：讓程式同時識別中文或可能的英文("Complete")
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Complete'))]"
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
         
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
+        # 這個按鈕的 class 通常是固定的，不受語言影響
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
         WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'list-items')]/div[contains(@class, 'item')]")))
@@ -91,6 +100,7 @@ class WmsScraper:
                         all_data.append({"寄送方式": shipping_method, "主要運送代碼": tracking_code})
                 except Exception: continue
             try:
+                # 雙語容錯：讓程式同時識別中文的「下一頁」和英文的 "Next"
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button = driver.find_element(By.XPATH, next_button_xpath)
                 if next_button.get_attribute('disabled'): break
@@ -127,7 +137,7 @@ class WmsScraper:
                 driver.quit()
 
 # =================================================================================
-# 資料處理與報告生成
+# 資料處理與報告生成 (與前一版相同)
 # =================================================================================
 
 def generate_report_text(df_to_process, display_timestamp, report_title):
@@ -152,30 +162,23 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
 
 def process_and_output_data(df, status_callback):
     status_callback("  > 正在進行資料處理...")
-    
     df['主要運送代碼'] = df['主要運送代碼'].astype(str)
     condition = (df['寄送方式'] == '7-11') & (df['主要運送代碼'].str.match(r'^\d', na=False))
     df.loc[condition, '寄送方式'] = '711大物流'
     status_callback("  > ✅ 細分組完成。")
-
     now = datetime.datetime.now()
     display_timestamp = now.strftime("%Y-%m-%d %H:%M")
-    
     priority_order = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
     all_methods = df['寄送方式'].unique().tolist()
     final_order = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
     df['寄送方式'] = pd.Categorical(df['寄送方式'], categories=final_order, ordered=True)
     df_sorted_all = df.sort_values(by='寄送方式')
-
     default_methods = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
     df_filtered = df_sorted_all[df_sorted_all['寄送方式'].isin(default_methods)]
-    
     st.session_state.report_texts['filtered_summary'], st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")
     st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
-    
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     st.session_state.final_df = df_sorted_all
-    
     try:
         pyperclip.copy(st.session_state.report_texts['filtered_full'])
         status_callback("✅ 預設項目已自動複製到剪貼簿！")
@@ -183,7 +186,7 @@ def process_and_output_data(df, status_callback):
         status_callback("❗️ 自動複製到剪貼簿失敗。您的環境可能不支援此操作。")
 
 # =================================================================================
-# 憑證處理函式
+# 憑證處理函式 (與前一版相同)
 # =================================================================================
 CREDENTIALS_FILE = "credentials.json"
 
@@ -205,18 +208,13 @@ def clear_credentials():
         os.remove(CREDENTIALS_FILE)
 
 # =================================================================================
-# Streamlit 前端介面
+# Streamlit 前端介面 (與前一版相同)
 # =================================================================================
 
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
-
-if 'scraping_done' not in st.session_state:
-    st.session_state.scraping_done = False
-if 'final_df' not in st.session_state:
-    st.session_state.final_df = pd.DataFrame()
-if 'report_texts' not in st.session_state:
-    st.session_state.report_texts = {}
-
+if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
+if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
+if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
@@ -229,22 +227,16 @@ with st.sidebar:
     remember_me = st.checkbox("記住我 (下次自動填入帳密)")
     st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
     
-
 st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
-
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
 
 if start_button:
-    if remember_me:
-        save_credentials(username, password)
-    else:
-        clear_credentials()
-
+    if remember_me: save_credentials(username, password)
+    else: clear_credentials()
     st.session_state.scraping_done = False
     status_area = st.empty()
     def streamlit_callback(message): status_area.info(message)
-
     with st.spinner("正在執行中，請勿關閉視窗..."):
         try:
             if not username or not password:
@@ -252,14 +244,12 @@ if start_button:
             else:
                 scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
                 result_df = scraper.run()
-                
                 if not result_df.empty:
                     process_and_output_data(result_df, streamlit_callback)
                     st.session_state.scraping_done = True
                     status_area.success("🎉 所有任務完成！請查看下方的結果。")
                 else:
                     status_area.warning("⚠️ 抓取完成，但沒有收到任何資料。")
-
         except Exception as e:
             st.session_state.scraping_done = False
             status_area.error(f"❌ 執行時發生致命錯誤：")
@@ -268,7 +258,6 @@ if start_button:
 if st.session_state.scraping_done:
     st.markdown("---")
     st.header("📊 擷取結果與操作")
-    
     tab1, tab2 = st.tabs(["統計摘要", "資料明細"])
     with tab1:
         st.subheader("指定項目分組統計 (預設)")
@@ -278,7 +267,6 @@ if st.session_state.scraping_done:
     with tab2:
         st.subheader("所有資料明細 (已排序)")
         st.dataframe(st.session_state.final_df)
-        
     st.markdown("---")
     st.header("🚀 操作按鈕")
     col1, col2 = st.columns(2)
@@ -292,18 +280,7 @@ if st.session_state.scraping_done:
             st.success("已複製所有項目內容！")
     with col2:
         st.info("💾 下載檔案 (所有資料)")
-        # 將 CSV 下載按鈕放回此處
-        st.download_button(
-            label="下載 CSV 檔案",
-            data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
-            file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv",
-            mime='text/csv',
-            use_container_width=True
-        )
-        st.download_button(
-            label="下載 TXT 檔案 (含摘要)",
-            data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
-            file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt",
-            mime='text/plain',
-            use_container_width=True
-        )
+        st.download_button(label="下載 CSV 檔案", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
+                          file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
+        st.download_button(label="下載 TXT 檔案 (含摘要)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
+                          file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
