@@ -46,59 +46,32 @@ class WmsScraper:
     def _navigate_to_picking_complete(self, driver):
         self._update_status("  > 尋找「揀貨管理」菜單...")
         picking_management_xpath = "//a[.//div[text()='揀貨管理']]"
-        
         try:
-            # --- [全新智慧邏輯] ---
-            # 1. 先嘗試直接點擊目標按鈕
-            picking_management_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, picking_management_xpath))
-            )
+            picking_management_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath)))
             self._update_status("  > 「揀貨管理」菜單可見，直接點擊。")
             picking_management_button.click()
-
         except TimeoutException:
-            # 2. 如果直接點擊失敗，就假設菜單被收合了，開始尋找漢堡選單
             self._update_status("  > 未直接找到菜單，嘗試點擊漢堡選單展開...")
-            
-            hamburger_xpaths = [
-                "//button[contains(@class, 'navbar-toggler')]",
-                "//button[contains(@class, 'menu-toggle')]",
-                "//a[contains(@class, 'menu-toggle')]",
-                "//button[@aria-label='menu']",
-                "//i[contains(@class, 'fa-bars')]/..",
-                "//div[contains(@class, 'menu-icon')]"
-            ]
-
+            hamburger_xpaths = ["//button[contains(@class, 'navbar-toggler')]", "//button[contains(@class, 'menu-toggle')]", "//a[contains(@class, 'menu-toggle')]", "//button[@aria-label='menu']", "//i[contains(@class, 'fa-bars')]/..", "//div[contains(@class, 'menu-icon')]"]
             hamburger_found_and_clicked = False
             for xpath in hamburger_xpaths:
                 try:
-                    hamburger_button = WebDriverWait(driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, xpath))
-                    )
+                    hamburger_button = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, xpath)))
                     driver.execute_script("arguments[0].click();", hamburger_button)
                     self._update_status(f"  > ✅ 已點擊漢堡選單。")
                     hamburger_found_and_clicked = True
-                    time.sleep(2)  # 等待菜單動畫展開
+                    time.sleep(2)
                     break
                 except TimeoutException:
                     continue
-            
             if not hamburger_found_and_clicked:
-                self._update_status("  > ❗️ 致命錯誤：找不到任何已知的漢堡選單按鈕。")
                 raise NoSuchElementException("無法找到『揀貨管理』菜單，也找不到可展開的漢堡選單。")
-
-            # 3. 展開漢堡選單後，再次尋找並點擊目標按鈕
             self._update_status("  > 漢堡選單已展開，再次尋找「揀貨管理」...")
-            picking_management_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, picking_management_xpath))
-            )
+            picking_management_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath)))
             picking_management_button.click()
-        
-        # --- 後續步驟不變 ---
         self._update_status("  > 正在等待分頁區塊載入...")
         default_tab_xpath = "//div[contains(@class, 'btn') and contains(., '未揀訂單')]"
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, default_tab_xpath)))
-        
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and contains(., '揀包完成')]"
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
@@ -107,10 +80,8 @@ class WmsScraper:
         self._update_status("  > 點擊查詢按鈕以載入資料...")
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
-
         WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'list-items')]/div[contains(@class, 'item')]")))
         self._update_status("  > 資料已初步載入。")
-
         all_data = []
         page_count = 1
         while True:
@@ -118,9 +89,7 @@ class WmsScraper:
             time.sleep(1.5)
             item_rows_xpath = "//div[contains(@class, 'list-items')]/div[contains(@class, 'item')]"
             rows = driver.find_elements(By.XPATH, item_rows_xpath)
-
             if not rows: break
-            
             for row in rows:
                 shipping_method, tracking_code = "", ""
                 try:
@@ -130,7 +99,6 @@ class WmsScraper:
                     if shipping_method or tracking_code:
                         all_data.append({"寄送方式": shipping_method, "主要運送代碼": tracking_code})
                 except Exception: continue
-                    
             try:
                 next_button_xpath = "//button[normalize-space()='下一頁']"
                 next_button = driver.find_element(By.XPATH, next_button_xpath)
@@ -140,7 +108,6 @@ class WmsScraper:
                     page_count += 1
                     WebDriverWait(driver, 10).until(EC.staleness_of(rows[0]))
             except Exception: break
-                
         return all_data
 
     def run(self):
@@ -164,7 +131,17 @@ class WmsScraper:
             
             self._update_status("✅ [成功] 所有資料抓取完成！")
             return pd.DataFrame(data)
-
+        except Exception as e:
+            # 在拋出任何錯誤之前，先印出頁面原始碼
+            if driver:
+                self._update_status("  > ❗️ 發生錯誤！正在擷取當前頁面 HTML 進行分析...")
+                print("\n" + "="*25 + " DEBUG: PAGE SOURCE ON ERROR " + "="*25)
+                # 使用 st.code 來美化輸出，如果這個函式在 Streamlit 主線程外
+                # 簡單的 print 也能輸出到日誌
+                print(driver.page_source)
+                print("="*70 + "\n")
+            # 重新拋出原始錯誤，讓 Streamlit 知道發生了問題
+            raise e
         finally:
             if driver:
                 driver.quit()
@@ -191,14 +168,9 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
     return summary_text, full_report_text
 
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
-
-if 'scraping_done' not in st.session_state:
-    st.session_state.scraping_done = False
-if 'final_df' not in st.session_state:
-    st.session_state.final_df = pd.DataFrame()
-if 'report_texts' not in st.session_state:
-    st.session_state.report_texts = {}
-
+if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
+if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
+if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
@@ -206,16 +178,13 @@ with st.sidebar:
     username = st.text_input("帳號", value="jeff02")
     password = st.text_input("密碼", value="j93559091", type="password")
     st.info("請確認設定無誤後，點擊主畫面的「開始擷取」按鈕。")
-
 st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
-
 if start_button:
     st.session_state.scraping_done = False
     status_area = st.empty()
-    def streamlit_callback(message):
-        status_area.info(message)
+    def streamlit_callback(message): status_area.info(message)
     with st.spinner("正在執行中，請勿關閉視窗..."):
         try:
             scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
@@ -246,7 +215,6 @@ if start_button:
             st.session_state.scraping_done = False
             status_area.error("❌ 執行時發生致命錯誤：")
             st.exception(e)
-
 if st.session_state.scraping_done:
     st.markdown("---")
     st.header("📊 擷取結果")
