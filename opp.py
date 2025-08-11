@@ -103,17 +103,21 @@ class WmsScraper:
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Complete'))]"
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
+    
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'list-items')]/div[contains(@class, 'item')]")))
+        
+        loading_spinner_xpath = "//div[contains(@class, 'j-loading')]"
+        WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
         self._update_status("  > 資料已初步載入。")
+        
         all_data = []
         page_count = 1
         while True:
             self._update_status(f"  > 正在抓取第 {page_count} 頁的資料...")
-            time.sleep(1.5)
+            time.sleep(1) # 短暫等待確保資料渲染
             item_rows_xpath = "//div[contains(@class, 'list-items')]/div[contains(@class, 'item')]"
             rows = driver.find_elements(By.XPATH, item_rows_xpath)
             if not rows: break
@@ -126,25 +130,28 @@ class WmsScraper:
                     if shipping_method or tracking_code:
                         all_data.append({"寄送方式": shipping_method, "主要運送代碼": tracking_code})
                 except Exception: continue
+            
+            # --- [最終修正] 使用最穩定的等待翻頁邏輯 ---
             try:
-                self._update_status(f"  > 第 {page_count} 頁抓取完畢，尋找下一頁按鈕...")
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button = driver.find_element(By.XPATH, next_button_xpath)
                 if next_button.get_attribute('disabled'):
                     self._update_status("  > 「下一頁」按鈕已禁用，抓取結束。")
                     break
                 else:
-                    self._update_status("  > 「下一頁」按鈕可見，正在點擊...")
+                    self._update_status(f"  > 第 {page_count} 頁抓取完畢，點擊下一頁...")
                     driver.execute_script("arguments[0].click();", next_button)
                     page_count += 1
+                    
+                    # 關鍵步驟：等待載入動畫消失，確保新頁面已完全載入
                     self._update_status(f"  > 等待第 {page_count} 頁載入...")
-                    WebDriverWait(driver, 10).until(EC.staleness_of(rows[0]))
+                    WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
                     self._update_status(f"  > 第 {page_count} 頁載入成功。")
-            except Exception as e:
-                self._update_status(f"  > ❗️ 翻頁失敗，抓取中止。錯誤: {e}")
-                time.sleep(5)
+            except Exception:
+                self._update_status("  > 未找到可點擊的「下一頁」按鈕，抓取結束。")
                 break
         return all_data
+
     def run(self):
         chrome_options = Options()
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
@@ -167,6 +174,7 @@ class WmsScraper:
             if driver:
                 driver.quit()
 
+# ... generate_report_text, process_and_output_data, 憑證處理函式保持不變 ...
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
@@ -187,7 +195,6 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
                       "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
                       f"{details_text}")
     return summary_text, full_report_text
-
 def process_and_output_data(df, status_callback):
     status_callback("  > 正在進行資料處理...")
     df['主要運送代碼'] = df['主要運送代碼'].astype(str)
@@ -208,7 +215,6 @@ def process_and_output_data(df, status_callback):
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     st.session_state.final_df = df_sorted_all
     status_callback("✅ 資料處理完成，請查看下方報告。")
-
 CREDENTIALS_FILE = "credentials.json"
 def load_credentials():
     if os.path.exists(CREDENTIALS_FILE):
@@ -221,11 +227,11 @@ def save_credentials(username, password):
 def clear_credentials():
     if os.path.exists(CREDENTIALS_FILE): os.remove(CREDENTIALS_FILE)
 
+# ... Streamlit UI 程式碼保持不變 ...
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
 if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
-
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
