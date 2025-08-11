@@ -183,15 +183,20 @@ class AutomationTool:
             self._update_status("  > 登入成功，準備點擊「其他用戶」標籤...")
             time.sleep(3)
             
-            # --- [最終修正] ---
             other_user_tab_xpath = "//a[normalize-space()='其他用戶']"
             wait = WebDriverWait(driver, 20)
             
-            self._update_status("  > 等待「其他用戶」元素出現...")
+            self._update_status("  > (1/3) 等待「其他用戶」元素出現...")
             other_user_tab = wait.until(EC.presence_of_element_located((By.XPATH, other_user_tab_xpath)))
             
-            self._update_status("  > 使用 JavaScript 強制點擊...")
-            driver.execute_script("arguments[0].click();", other_user_tab)
+            self._update_status("  > (2/3) 將按鈕滾動至可見區域...")
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", other_user_tab)
+            time.sleep(1)
+
+            self._update_status("  > (3/3) 等待「其他用戶」元素變為可點擊...")
+            wait.until(EC.element_to_be_clickable((By.XPATH, other_user_tab_xpath)))
+            
+            other_user_tab.click()
             self._update_status("  > ✅ 「其他用戶」點擊成功！")
             
             self._update_status("  > 正在尋找 7-11 輸入框...")
