@@ -180,13 +180,17 @@ class AutomationTool:
         try:
             driver = self._initialize_driver()
             self._login_niceshoppy(driver, url, username, password)
-            self._update_status("  > 正在點擊「其他用戶」標籤...")
             
-            # --- [最終修正] ---
-            # 根據您的截圖，將 button 改為 a
-            other_user_tab = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), '其他用戶')]")))
-            other_user_tab.click()
+            # --- [主要修改處] ---
+            self._update_status("  > 登入成功，等待頁面元件載入...")
+            time.sleep(3) # 強制等待3秒讓頁面JS元件載入
 
+            self._update_status("  > 正在點擊「其他用戶」標籤...")
+            # 根據您的截圖，將 button 改為 a，並使用更穩定的 JS 點擊
+            other_user_tab_xpath = "//a[normalize-space()='其他用戶']"
+            other_user_tab = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, other_user_tab_xpath)))
+            driver.execute_script("arguments[0].click();", other_user_tab)
+            
             self._update_status("  > 正在尋找 7-11 輸入框...")
             seven_eleven_textarea = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//div[h5[contains(text(), '7-11')]]//textarea")))
             self._update_status(f"  > 找到輸入框，準備貼上 {len(codes_to_process)} 筆代碼...")
@@ -208,7 +212,7 @@ class AutomationTool:
             if driver: driver.quit()
 
 # =================================================================================
-# 資料處理與報告生成
+# 資料處理與報告生成 (與前一版相同)
 # =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
