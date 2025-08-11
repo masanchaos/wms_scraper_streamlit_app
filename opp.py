@@ -56,7 +56,7 @@ def create_copy_button(text_to_copy: str, button_text: str, key: str):
     return components.html(button_html, height=45)
 
 # =================================================================================
-# 核心爬蟲邏輯 (已擴充)
+# 核心爬蟲邏輯 (已修正架構)
 # =================================================================================
 class AutomationTool:
     def __init__(self, status_callback=None):
@@ -75,7 +75,7 @@ class AutomationTool:
         driver.set_window_size(1920, 1080)
         return driver
 
-    # --- WMS Methods ---
+    # --- WMS Methods (恢復正常) ---
     def _login_wms(self, driver, url, username, password):
         self._update_status("  > 正在前往 WMS 登入頁面...")
         driver.get(url)
@@ -172,11 +172,15 @@ class AutomationTool:
             time.sleep(2)
             data = self._scrape_data(driver)
             return pd.DataFrame(data)
+        except Exception as e:
+            self._update_status(f"❌ WMS 抓取過程中發生錯誤: {e}")
+            # 確保即使出錯也返回 None，而不是讓異常中斷程式
+            return None
         finally:
             if driver: driver.quit()
 
     # =========================================================================
-    # START: DEBUG-ENHANCED NiceShoppy Automation Function
+    # START: REVISED and DEBUG-ENHANCED NiceShoppy Automation Function
     # =========================================================================
     def run_niceshoppy_automation(self, url, username, password, codes_to_process):
         driver = None
@@ -195,14 +199,13 @@ class AutomationTool:
                 self._update_status("  > [除錯資訊] 警告：頁面中存在 iframe，這可能是點擊失敗的原因。")
 
             # --- 診斷步驟 2: 使用更精確的 XPath 並檢查元素狀態 ---
-            # 根據您提供的HTML截圖，按鈕位於 <div class="my-tab"> 內部
             other_user_tab_xpath = "//div[@class='my-tab']//a[normalize-space()='其他用戶']"
             self._update_status("  > [除錯資訊] 使用更精確的 XPath 尋找元素...")
 
             try:
                 other_user_tab = wait.until(EC.presence_of_element_located((By.XPATH, other_user_tab_xpath)))
                 self._update_status("  > [除錯資訊] 成功找到元素！")
-                # 回報元素狀態
+                
                 is_displayed = other_user_tab.is_displayed()
                 is_enabled = other_user_tab.is_enabled()
                 self._update_status(f"  > [除錯資訊] 元素是否可見 (is_displayed): {is_displayed}")
@@ -216,19 +219,18 @@ class AutomationTool:
                 self._update_status("  > 執行 JavaScript 點擊...")
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'}); arguments[0].click();", other_user_tab)
                 self._update_status("  > JS 點擊指令已發送。等待2秒讓頁面反應...")
-                time.sleep(2) # 等待JS生效
+                time.sleep(2) 
 
                 # --- 診斷步驟 4: 驗證點擊結果 ---
-                # 點擊成功後，該元素的 class 應該會包含 'active'
                 class_attribute = other_user_tab.get_attribute('class')
                 self._update_status(f"  > [除錯資訊] 點擊後，元素的 class 為: '{class_attribute}'")
 
                 if 'active' in class_attribute:
                     self._update_status("  > ✅ [驗證成功] 「其他用戶」頁籤已成功切換！")
                 else:
-                    self._update_status("  > ❌ [驗證失敗] 點擊未生效，頁籤未切換！嘗試直接呼叫 JS 函式...")
-                    # 備用方案：直接呼叫 onclick 的函式
-                    driver.execute_script("openTab(event, 'other_tab')")
+                    self._update_status("  > ❌ [驗證失敗] 點擊未生效！嘗試直接呼叫 JS 函式 (備用方案)...")
+                    # 備用方案：直接呼叫 onclick 的函式，將 event 替換為 null
+                    driver.execute_script("openTab(null, 'other_tab')")
                     time.sleep(2)
                     class_attribute_after_fallback = other_user_tab.get_attribute('class')
                     self._update_status(f"  > [除錯資訊] 備用方案後，元素的 class 為: '{class_attribute_after_fallback}'")
@@ -236,9 +238,9 @@ class AutomationTool:
                          raise Exception("所有點擊方法均失敗")
 
             except Exception as e:
-                self._update_status(f"  > ❗️ 在點擊「其他用戶」的過程中發生關鍵錯誤: {e}")
+                self._update_status(f"  > ❗️ 在點擊「其他用戶」時發生關鍵錯誤: {e}")
                 driver.save_screenshot('niceshoppy_debug_error.png')
-                st.image('niceshoppy_debug_error.png', caption='除錯過程失敗截圖')
+                # 僅儲存截圖，不呼叫 st.image
                 raise 
 
             self._update_status("  > 正在尋找 7-11 輸入框...")
@@ -260,14 +262,15 @@ class AutomationTool:
             try:
                 if driver:
                     driver.save_screenshot('niceshoppy_fatal_error.png')
-                    st.image('niceshoppy_fatal_error.png')
+                    # 僅儲存截圖，不呼叫 st.image
             except: pass
             return False
         finally:
             if driver: driver.quit()
     # =========================================================================
-    # END: DEBUG-ENHANCED NiceShoppy Automation Function
+    # END: REVISED NiceShoppy Automation Function
     # =========================================================================
+
 
 # =================================================================================
 # 資料處理與報告生成
@@ -370,6 +373,7 @@ with main_tab1:
         st.session_state.seven_eleven_codes = []
         progress_text = st.empty(); progress_duck = st.empty()
         st.session_state.duck_index = 0
+        
         # 假設你有這些圖片檔在本地
         duck_images = ["duck_0.png", "duck_1.png", "duck_2.png", "duck_3.png", "duck_4.png"]
         
@@ -379,8 +383,8 @@ with main_tab1:
             elif "進入揀包完成頁面" in message and st.session_state.duck_index < 2: st.session_state.duck_index = 2
             elif "所有頁面資料抓取完畢" in message and st.session_state.duck_index < 3: st.session_state.duck_index = 3
             elif "資料處理完成" in message and st.session_state.duck_index < 4: st.session_state.duck_index = 4
-            progress_text.text(f"{text}...")
-            # 為了避免找不到圖片檔而出錯，加上檔案存在檢查
+            progress_text.info(f"{text}...") # 使用 .info 讓訊息更清晰
+            
             if os.path.exists(duck_images[st.session_state.duck_index]):
                 progress_duck.image(duck_images[st.session_state.duck_index])
 
@@ -391,14 +395,19 @@ with main_tab1:
                 streamlit_callback("準備開始... 🐣")
                 tool = AutomationTool(status_callback=streamlit_callback)
                 result_df = tool.run_wms_scrape(wms_url, wms_username, wms_password)
+                
                 if result_df is not None and not result_df.empty:
                     process_and_output_data(result_df, streamlit_callback)
                     st.session_state.wms_scraping_done = True
-                    time.sleep(1.5); progress_text.empty(); progress_duck.empty()
+                    time.sleep(1); progress_text.empty(); progress_duck.empty()
                     st.success("🎉 WMS 任務完成！")
-                else:
+                elif result_df is not None and result_df.empty:
                     progress_text.empty(); progress_duck.empty()
                     st.warning("⚠️ WMS 抓取完成，但沒有收到任何資料。")
+                else: # result_df is None, 表示過程出錯
+                    progress_text.empty(); progress_duck.empty()
+                    st.error("❌ 執行 WMS 任務時發生錯誤，請查看日誌。")
+
         except Exception as e:
             progress_text.empty(); progress_duck.empty()
             st.error(f"❌ 執行 WMS 任務時發生致命錯誤："); st.exception(e)
@@ -447,10 +456,8 @@ with main_tab2:
             status_area_shoppy = st.empty()
             
             def shoppy_callback(message): 
-                # 使用 st.info 讓訊息框保持可見直到下次更新
                 status_area_shoppy.info(message)
             
-            # 不再使用 st.spinner，因為回呼函式會處理狀態更新
             try:
                 if not shoppy_username or not shoppy_password:
                     st.error("❌ 請務必在側邊欄設定中輸入蝦皮出貨快手的帳號和密碼！")
@@ -461,8 +468,7 @@ with main_tab2:
                     if success:
                         status_area_shoppy.success("🎉 蝦皮出貨快手任務已成功執行！")
                     else:
-                        # 錯誤訊息由函式內部透過回呼顯示
-                        status_area_shoppy.error("❌ 蝦皮出貨快手任務失敗，請查看上方日誌或截圖。")
+                        status_area_shoppy.error("❌ 蝦皮出貨快手任務失敗，請查看上方日誌。若有截圖產生，請在程式所在的資料夾內查看。")
             except Exception as e:
                 status_area_shoppy.error("❌ 執行蝦皮出貨快手任務時發生致命錯誤：")
                 st.exception(e)
