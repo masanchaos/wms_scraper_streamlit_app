@@ -22,30 +22,26 @@ def create_copy_button(text_to_copy: str, button_text: str, key: str):
     escaped_text = html.escape(text_to_copy)
     button_html = f"""
     <html><head><style>
-        .st-emotion-cache-1r6slb0 {{ border: 1px solid rgba(49, 51, 63, 0.2); border-radius: 0.5rem; padding: 1rem; }}
         .copy-btn {{
-            border: 1px solid var(--secondary-background-color);
-            background-color: var(--secondary-background-color);
+            display: inline-block; padding: 0.25rem 0.75rem; font-size: 14px;
+            font-weight: 400; text-align: center; white-space: nowrap;
+            vertical-align: middle; cursor: pointer; user-select: none;
+            border: 1px solid transparent; border-radius: 0.5rem;
             color: var(--text-color);
-            padding: 0.25rem 0.75rem;
-            border-radius: 0.5rem;
-            font-size: 14px;
-            font-family: var(--font);
-            cursor: pointer;
-            transition: all 0.2s ease;
+            background-color: var(--secondary-background-color);
+            transition: color .15s ease-in-out,background-color .15s ease-in-out,border-color .15s ease-in-out;
             width: 100%;
         }}
         .copy-btn:hover {{
             border-color: var(--primary-color);
             color: var(--primary-color);
         }}
-        .copy-btn:active {{
-            transform: scale(0.98);
-        }}
+        .copy-btn:active {{ transform: scale(0.98); }}
         .copy-btn:disabled {{
             background-color: var(--primary-color);
             color: white;
             cursor: default;
+            opacity: 0.65;
         }}
     </style></head>
     <body>
@@ -57,15 +53,9 @@ def create_copy_button(text_to_copy: str, button_text: str, key: str):
                 navigator.clipboard.writeText(text).then(() => {{
                     const button = document.getElementById("{key}");
                     const originalText = button.innerText;
-                    button.innerText = '已複製!';
-                    button.disabled = true;
-                    setTimeout(() => {{
-                        button.innerText = originalText;
-                        button.disabled = false;
-                    }}, 1500);
-                }}, (err) => {{
-                    console.error('無法複製文字: ', err);
-                }});
+                    button.innerText = '已複製!'; button.disabled = true;
+                    setTimeout(() => {{ button.innerText = originalText; button.disabled = false; }}, 1500);
+                }}, (err) => {{ console.error('無法複製文字: ', err); }});
             }});
         </script>
     </body></html>
@@ -89,25 +79,17 @@ class WmsScraper:
         account_xpath = "//input[@placeholder='example@jenjan.com.tw']"
         password_xpath = "//input[@type='password']"
         account_input = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, account_xpath)))
-        account_input.click()
-        account_input.send_keys(self.username)
+        account_input.click(); account_input.send_keys(self.username)
         password_input = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, password_xpath)))
-        password_input.click()
-        password_input.send_keys(self.password)
+        password_input.click(); password_input.send_keys(self.password)
         password_input.send_keys(Keys.ENTER)
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "app")))
         self._update_status("✅ [成功] 登入完成！")
-        self._update_status("  > 等待主頁面穩定...")
         time.sleep(5)
     def _navigate_to_picking_complete(self, driver):
         self._update_status("  > 尋找導覽菜單...")
         picking_management_xpath = "//a[@href='/admin/pickup']"
-        try:
-            picking_management_button = WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath)))
-            picking_management_button.click()
-        except Exception as e:
-            self._update_status("  > ❗️ 致命錯誤：無法找到或點擊導覽菜單。")
-            raise e
+        WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath))).click()
         self._update_status("  > 正在等待分頁區塊載入...")
         default_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '未揀訂單') or contains(., 'Unpicked'))]"
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, default_tab_xpath)))
@@ -128,11 +110,8 @@ class WmsScraper:
         while True:
             self._update_status(f"  > 正在抓取第 {page_count} 頁的資料...")
             current_page_rows = driver.find_elements(By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")
-            if not current_page_rows:
-                self._update_status("  > 未在頁面中找到任何資料列，抓取結束。")
-                break
+            if not current_page_rows: break
             for row in current_page_rows:
-                shipping_method, tracking_code = "", ""
                 try:
                     shipping_method = row.find_element(By.XPATH, "./div[2]/div[3]").text.strip()
                     tracking_code_input = row.find_element(By.XPATH, "./div[2]/div[4]//input")
@@ -143,43 +122,34 @@ class WmsScraper:
             try:
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button = driver.find_element(By.XPATH, next_button_xpath)
-                if next_button.get_attribute('disabled'):
-                    self._update_status("  > 「下一頁」按鈕已禁用，抓取結束。")
-                    break
-                else:
-                    self._update_status(f"  > 第 {page_count} 頁抓取完畢，點擊下一頁...")
-                    driver.execute_script("arguments[0].click();", next_button)
-                    page_count += 1
-                    self._update_status(f"  > 等待第 {page_count} 頁載入 (等待舊資料消失)...")
-                    WebDriverWait(driver, 20).until(EC.staleness_of(current_page_rows[0]))
-                    self._update_status(f"  > 等待第 {page_count} 頁載入 (等待新資料出現)...")
-                    WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.XPATH, item_list_container_xpath)))
-                    self._update_status(f"  > 第 {page_count} 頁載入成功。")
-            except Exception:
-                self._update_status("  > 未找到可點擊的「下一頁」按鈕，抓取結束。")
-                break
+                if next_button.get_attribute('disabled'): break
+                driver.execute_script("arguments[0].click();", next_button)
+                page_count += 1
+                WebDriverWait(driver, 20).until(EC.staleness_of(current_page_rows[0]))
+                WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.XPATH, item_list_container_xpath)))
+            except Exception: break
+        self._update_status("  > 所有頁面資料抓取完畢。")
         return all_data
     def run(self):
         chrome_options = Options()
-        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         driver = None
         try:
-            self._update_status("  > 正在初始化 WebDriver...")
+            self._update_status("  > 初始化 WebDriver...")
             driver = webdriver.Chrome(options=chrome_options)
             driver.set_window_size(1920, 1080)
             self._login(driver)
             self._navigate_to_picking_complete(driver)
-            time.sleep(3)
+            time.sleep(2)
             data = self._scrape_data(driver)
-            self._update_status("✅ [成功] 所有資料抓取完成！")
+            self._update_status("✅ 所有資料抓取完成！")
             return pd.DataFrame(data)
         finally:
-            if driver:
-                driver.quit()
+            if driver: driver.quit()
 
 # =================================================================================
 # 資料處理與報告生成
@@ -197,7 +167,6 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
         if row['數量'] > 0:
             percentage = round((row['數量'] / total_count) * 100) if total_count > 0 else 0
             method_part = f"{row['寄送方式']}:"
-            # 將數量和百分比組合成一個字串，然後整體靠右對齊
             count_percent_part = f"{row['數量']} ({percentage}%)"
             line = f"{method_part:<{max_len}} {count_percent_part:>15}"
             summary_lines.append(line)
@@ -211,11 +180,10 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
     return summary_text, full_report_text
 
 def process_and_output_data(df, status_callback):
-    status_callback("  > 正在進行資料處理...")
+    status_callback("  > 細分組...")
     df['主要運送代碼'] = df['主要運送代碼'].astype(str)
     condition = (df['寄送方式'] == '7-11') & (df['主要運送代碼'].str.match(r'^\d', na=False))
     df.loc[condition, '寄送方式'] = '711大物流'
-    status_callback("  > ✅ 細分組完成。")
     now = datetime.datetime.now(ZoneInfo("Asia/Taipei"))
     display_timestamp = now.strftime("%Y-%m-%d %H:%M")
     priority_order = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
@@ -230,8 +198,9 @@ def process_and_output_data(df, status_callback):
     st.session_state.report_texts['filtered_summary'], st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")
     st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
-    status_callback("✅ 資料處理完成，請查看下方報告。")
+    status_callback("✅ 資料處理完成！")
 
+# ... 憑證處理函式 ...
 CREDENTIALS_FILE = "credentials.json"
 def load_credentials():
     if os.path.exists(CREDENTIALS_FILE):
@@ -253,6 +222,7 @@ if 'scraping_done' not in st.session_state: st.session_state.scraping_done = Fal
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'df_filtered' not in st.session_state: st.session_state.df_filtered = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
+
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
@@ -264,32 +234,48 @@ with st.sidebar:
     password = st.text_input("密碼", value=saved_password, type="password")
     remember_me = st.checkbox("記住我 (下次自動填入帳密)")
     st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
+
 st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
-start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
-if start_button:
+
+if st.button("🚀 開始擷取資料", type="primary", use_container_width=True):
     if remember_me: save_credentials(username, password)
     else: clear_credentials()
     st.session_state.scraping_done = False
-    status_area = st.empty()
-    def streamlit_callback(message): status_area.info(message)
-    with st.spinner("正在執行中，請勿關閉視窗..."):
-        try:
-            if not username or not password:
-                status_area.error("❌ 請務必輸入帳號和密碼！")
+    
+    progress_bar = st.progress(0, text="準備開始...")
+    
+    def streamlit_callback(message):
+        # 根據訊息關鍵字更新進度條
+        if "登入完成" in message:
+            progress_bar.progress(25, text="登入成功，正在導覽頁面...")
+        elif "進入揀包完成頁面" in message:
+            progress_bar.progress(50, text="導覽成功，準備擷取資料...")
+        elif "所有頁面資料抓取完畢" in message:
+            progress_bar.progress(75, text="資料擷取完畢，正在進行統計...")
+        elif "資料處理完成" in message:
+            progress_bar.progress(100, text="處理完成！")
+            
+    try:
+        if not username or not password:
+            st.error("❌ 請務必輸入帳號和密碼！")
+        else:
+            scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
+            result_df = scraper.run()
+            if not result_df.empty:
+                process_and_output_data(result_df, streamlit_callback)
+                st.session_state.scraping_done = True
+                time.sleep(1) # 讓使用者看到100%
+                progress_bar.empty() # 隱藏進度條
+                st.success("🎉 所有任務完成！請查看下方的結果。")
             else:
-                scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
-                result_df = scraper.run()
-                if not result_df.empty:
-                    process_and_output_data(result_df, streamlit_callback)
-                    st.session_state.scraping_done = True
-                    status_area.success("🎉 所有任務完成！請查看下方的結果。")
-                else:
-                    status_area.warning("⚠️ 抓取完成，但沒有收到任何資料。")
-        except Exception as e:
-            st.session_state.scraping_done = False
-            status_area.error(f"❌ 執行時發生致命錯誤：")
-            st.exception(e)
+                progress_bar.empty()
+                st.warning("⚠️ 抓取完成，但沒有收到任何資料。")
+    except Exception as e:
+        progress_bar.empty()
+        st.error("❌ 執行時發生致命錯誤：")
+        st.exception(e)
+
 if st.session_state.scraping_done:
     st.markdown("---")
     st.header("📊 擷取結果")
@@ -303,7 +289,7 @@ if st.session_state.scraping_done:
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "一鍵複製此報告", key="copy-btn-filtered")
+            create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "一鍵複製報告", key="copy-btn-filtered")
         with col2:
             st.download_button(
                 label="下載 CSV (指定項目)", 
@@ -328,7 +314,7 @@ if st.session_state.scraping_done:
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            create_copy_button(st.session_state.report_texts.get('all_full', ''), "一鍵複製此報告", key="copy-btn-all")
+            create_copy_button(st.session_state.report_texts.get('all_full', ''), "一鍵複製報告", key="copy-btn-all")
         with col2:
             st.download_button(
                 label="下載 CSV (所有資料)", 
