@@ -148,25 +148,37 @@ class AutomationTool:
     def _login_niceshoppy(self, driver, url, username, password):
         self._update_status("  > 正在前往蝦皮出貨快手頁面...")
         driver.get(url)
-        driver.save_screenshot('shoppy_debug_0_initial_page.png') # 截圖 0
+        driver.save_screenshot('shoppy_debug_0_initial_page.png')
         
         try:
+            self._update_status("  > 步驟 1/4: 尋找「登入」連結...")
             login_link_xpath = "//a[normalize-space()='登入']"
             login_link = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, login_link_xpath)))
-            self._update_status("  > 偵測到尚未登入，點擊「登入」連結...")
+            self._update_status("  > ✅ 找到連結，正在點擊...")
             login_link.click()
-            driver.save_screenshot('shoppy_debug_1_after_login_link.png') # 截圖 1
         except TimeoutException:
-            self._update_status("  > 未找到「登入」連結，假設已在登入頁面。")
+            self._update_status("  > ⚠️ 未找到「登入」連結，假設已在登入頁面。")
         
-        self._update_status("  > 正在輸入帳號密碼...")
-        WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.NAME, "email"))).send_keys(username)
-        driver.find_element(By.NAME, "password").send_keys(password)
-        driver.save_screenshot('shoppy_debug_2_credentials_filled.png') # 截圖 2
+        driver.save_screenshot('shoppy_debug_1_login_page.png')
         
-        driver.find_element(By.XPATH, "//button[@type='submit']").click()
+        try:
+            self._update_status("  > 步驟 2/4: 尋找「電子郵件」輸入框...")
+            email_input = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.NAME, "email")))
+            email_input.send_keys(username)
+            
+            self._update_status("  > 步驟 3/4: 尋找「密碼」輸入框...")
+            password_input = driver.find_element(By.NAME, "password")
+            password_input.send_keys(password)
+            
+            self._update_status("  > 步驟 4/4: 尋找並點擊「登入」按鈕...")
+            submit_button = driver.find_element(By.XPATH, "//button[@type='submit']")
+            submit_button.click()
+
+        except TimeoutException as e:
+            raise Exception(f"無法找到登入欄位，頁面可能未正確載入。錯誤: {e}")
+        
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, "//h1[contains(text(), '建立超商寄件單')]")))
-        driver.save_screenshot('shoppy_debug_3_login_success.png') # 截圖 3
+        driver.save_screenshot('shoppy_debug_2_login_success.png')
         self._update_status("✅ [成功] 蝦皮出貨快手登入成功！")
 
     # --- Main Execution Flows ---
@@ -184,13 +196,13 @@ class AutomationTool:
 
     def run_niceshoppy_automation(self, url, username, password, codes_to_process):
         driver = None
+        screenshot_paths = []
         try:
             driver = self._initialize_driver()
             self._login_niceshoppy(driver, url, username, password)
             self._update_status("  > 正在點擊「其他用戶」標籤...")
             other_user_tab = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), '其他用戶')]")))
             other_user_tab.click()
-            driver.save_screenshot('shoppy_debug_4_other_user_tab.png') # 截圖 4
             
             self._update_status("  > 正在尋找 7-11 輸入框...")
             seven_eleven_textarea = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//div[h5[contains(text(), '7-11')]]//textarea")))
@@ -199,23 +211,26 @@ class AutomationTool:
             codes_as_string = "\n".join(codes_to_process)
             seven_eleven_textarea.send_keys(codes_as_string)
             self._update_status("  > ✅ 代碼已全部貼上！")
-            driver.save_screenshot('shoppy_debug_5_codes_pasted.png') # 截圖 5
             
             driver.find_element(By.XPATH, "//button[contains(text(), '產出寄件單')]").click()
             self._update_status("🎉 [完成] 已點擊產出寄件單！請在新分頁中查看結果。")
             time.sleep(5)
-            return True
+            return True, []
         except Exception as e:
             self._update_status(f"  > ❗️ 蝦皮出貨快手處理過程中發生錯誤: {e}")
-            try:
-                driver.save_screenshot('shoppy_debug_ERROR.png')
-            except: pass
-            return False
+            # 儲存所有截圖的路徑
+            for i in range(10): # 嘗試儲存最多10張截圖
+                path = f'shoppy_debug_{i}.png'
+                if os.path.exists(path): screenshot_paths.append(path)
+            path = 'shoppy_debug_ERROR.png'
+            if os.path.exists(path): screenshot_paths.append(path)
+
+            return False, screenshot_paths
         finally:
             if driver: driver.quit()
 
 # =================================================================================
-# 資料處理與報告生成 (與前一版相同)
+# 資料處理與報告生成
 # =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
@@ -386,26 +401,15 @@ with main_tab2:
                         st.error("❌ 請務必在側邊欄設定中輸入蝦皮出貨快手的帳號和密碼！")
                     else:
                         tool = AutomationTool(status_callback=shoppy_callback)
-                        success = tool.run_niceshoppy_automation(shoppy_url, shoppy_username, shoppy_password, st.session_state.seven_eleven_codes)
+                        success, screenshots = tool.run_niceshoppy_automation(shoppy_url, shoppy_username, shoppy_password, st.session_state.seven_eleven_codes)
                         if success:
                             status_area_shoppy.success("🎉 蝦皮出貨快手任務已成功執行！")
                         else:
-                            status_area_shoppy.error("❌ 蝦皮出貨快手任務失敗，請查看上方日誌或截圖。")
+                            status_area_shoppy.error("❌ 蝦皮出貨快手任務失敗，請查看下方偵錯截圖。")
+                            st.subheader("🕵️‍♂️ 偵錯截圖")
+                            st.warning("以下是程式失敗前的最後畫面，請依此判斷問題所在。")
+                            for img_path in screenshots:
+                                if os.path.exists(img_path):
+                                    st.image(img_path, caption=os.path.basename(img_path))
                 except Exception as e:
-                    status_area_shoppy.error("❌ 執行蝦皮出貨快手任務時發生致命錯誤：")
-                    # --- [主要修改處] 顯示偵錯截圖 ---
-                    st.exception(e)
-                    st.subheader("🕵️‍♂️ 偵錯截圖")
-                    st.warning("以下是程式失敗前的最後畫面，請依此判斷問題所在。")
-                    debug_images = [
-                        'shoppy_debug_0_initial_page.png',
-                        'shoppy_debug_1_after_login_link.png',
-                        'shoppy_debug_2_credentials_filled.png',
-                        'shoppy_debug_3_login_success.png',
-                        'shoppy_debug_4_other_user_tab.png',
-                        'shoppy_debug_5_codes_pasted.png',
-                        'shoppy_debug_ERROR.png'
-                    ]
-                    for img_path in debug_images:
-                        if os.path.exists(img_path):
-                            st.image(img_path, caption=img_path)
+                    status_area_shoppy.error("❌ 執行蝦皮出貨快手任務時發生致命錯誤："); st.exception(e)
