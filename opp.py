@@ -16,22 +16,56 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# 自訂的、零依賴的複製按鈕元件
+# 自訂複製按鈕 (已美化)
 # =================================================================================
 def create_copy_button(text_to_copy: str, button_text: str, key: str):
     escaped_text = html.escape(text_to_copy)
     button_html = f"""
-    <html><head><style>.copy-btn {{ display: inline-block; padding: 6px 12px; margin-top: 5px; font-size: 14px; font-weight: 400; text-align: center; white-space: nowrap; vertical-align: middle; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; color: #333; background-color: #fff; user-select: none; }}.copy-btn:hover {{ background-color: #f0f0f0; }}.copy-btn:active {{ background-color: #e6e6e6; border-color: #adadad; }}</style></head>
-    <body><div id="text-for-{key}" style="display: none;">{escaped_text}</div><button id="{key}" class="copy-btn">{button_text}</button>
+    <html><head><style>
+        .st-emotion-cache-1r6slb0 {{ border: 1px solid rgba(49, 51, 63, 0.2); border-radius: 0.5rem; padding: 1rem; }}
+        .copy-btn {{
+            border: 1px solid var(--secondary-background-color);
+            background-color: var(--secondary-background-color);
+            color: var(--text-color);
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.5rem;
+            font-size: 14px;
+            font-family: var(--font);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+        }}
+        .copy-btn:hover {{
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }}
+        .copy-btn:active {{
+            transform: scale(0.98);
+        }}
+        .copy-btn:disabled {{
+            background-color: var(--primary-color);
+            color: white;
+            cursor: default;
+        }}
+    </style></head>
+    <body>
+        <div id="text-for-{key}" style="display: none;">{escaped_text}</div>
+        <button id="{key}" class="copy-btn">{button_text}</button>
         <script>
             document.getElementById("{key}").addEventListener("click", function() {{
                 const text = document.getElementById("text-for-{key}").textContent;
                 navigator.clipboard.writeText(text).then(() => {{
                     const button = document.getElementById("{key}");
                     const originalText = button.innerText;
-                    button.innerText = '已複製!'; button.disabled = true;
-                    setTimeout(() => {{ button.innerText = originalText; button.disabled = false; }}, 1500);
-                }}, (err) => {{ console.error('無法複製文字: ', err); }});
+                    button.innerText = '已複製!';
+                    button.disabled = true;
+                    setTimeout(() => {{
+                        button.innerText = originalText;
+                        button.disabled = false;
+                    }}, 1500);
+                }}, (err) => {{
+                    console.error('無法複製文字: ', err);
+                }});
             }});
         </script>
     </body></html>
@@ -48,8 +82,7 @@ class WmsScraper:
         self.password = password
         self.status_callback = status_callback
     def _update_status(self, message):
-        if self.status_callback:
-            self.status_callback(message)
+        if self.status_callback: self.status_callback(message)
     def _login(self, driver):
         self._update_status("  > 正在前往登入頁面...")
         driver.get(self.url)
@@ -82,7 +115,6 @@ class WmsScraper:
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Complete'))]"
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
-    
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
@@ -95,7 +127,6 @@ class WmsScraper:
         item_list_container_xpath = "//div[contains(@class, 'list-items')]"
         while True:
             self._update_status(f"  > 正在抓取第 {page_count} 頁的資料...")
-            # 優化：移除非必要的固定等待
             current_page_rows = driver.find_elements(By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")
             if not current_page_rows:
                 self._update_status("  > 未在頁面中找到任何資料列，抓取結束。")
@@ -128,7 +159,6 @@ class WmsScraper:
                 self._update_status("  > 未找到可點擊的「下一頁」按鈕，抓取結束。")
                 break
         return all_data
-
     def run(self):
         chrome_options = Options()
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
@@ -151,6 +181,9 @@ class WmsScraper:
             if driver:
                 driver.quit()
 
+# =================================================================================
+# 資料處理與報告生成
+# =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
@@ -164,9 +197,9 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
         if row['數量'] > 0:
             percentage = round((row['數量'] / total_count) * 100) if total_count > 0 else 0
             method_part = f"{row['寄送方式']}:"
-            count_part = str(row['數量'])
-            percent_part = f"({percentage}%)"
-            line = f"{method_part:<{max_len}} {count_part:>6}   {percent_part:>6}"
+            # 將數量和百分比組合成一個字串，然後整體靠右對齊
+            count_percent_part = f"{row['數量']} ({percentage}%)"
+            line = f"{method_part:<{max_len}} {count_percent_part:>15}"
             summary_lines.append(line)
     summary_lines.append("------------------------------")
     summary_lines.append(f"總計: {total_count}")
@@ -257,46 +290,42 @@ if start_button:
             st.session_state.scraping_done = False
             status_area.error(f"❌ 執行時發生致命錯誤：")
             st.exception(e)
-
 if st.session_state.scraping_done:
     st.markdown("---")
     st.header("📊 擷取結果")
     
-    # --- [最終 UI 設計] ---
     tab1, tab2 = st.tabs(["📊 指定項目報告", "📋 所有項目報告"])
 
     with tab1:
         st.subheader("指定項目統計與明細")
-        st.text_area(
-            "指定項目報告內容 (可直接複製)",
-            value=st.session_state.report_texts.get('filtered_full', '無資料'),
-            height=500,
-            label_visibility="collapsed"
-        )
+        st.text_area("指定項目報告內容 (可直接複製)", value=st.session_state.report_texts.get('filtered_full', '無資料'), height=500, label_visibility="collapsed")
         st.markdown("---")
-        # 將操作按鈕整合進分頁中
-        col1, col2 = st.columns(2)
+        
+        col1, col2, col3 = st.columns(3)
         with col1:
             create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "一鍵複製此報告", key="copy-btn-filtered")
         with col2:
             st.download_button(
-                label="下載 CSV (僅指定項目)", 
+                label="下載 CSV (指定項目)", 
                 data=st.session_state.df_filtered.to_csv(index=False, encoding='utf-8-sig'),
                 file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.csv", 
                 mime='text/csv', 
                 use_container_width=True
             )
-
+        with col3:
+            st.download_button(
+                label="下載 TXT (指定項目)", 
+                data=st.session_state.report_texts.get('filtered_full', '').encode('utf-8'),
+                file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.txt", 
+                mime='text/plain', 
+                use_container_width=True
+            )
+            
     with tab2:
         st.subheader("所有項目統計與明細")
-        st.text_area(
-            "所有項目報告內容 (可直接複製)",
-            value=st.session_state.report_texts.get('all_full', '無資料'),
-            height=500,
-            label_visibility="collapsed"
-        )
+        st.text_area("所有項目報告內容 (可直接複製)", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed")
         st.markdown("---")
-        # 將操作按鈕整合進分頁中
+        
         col1, col2, col3 = st.columns(3)
         with col1:
             create_copy_button(st.session_state.report_texts.get('all_full', ''), "一鍵複製此報告", key="copy-btn-all")
