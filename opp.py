@@ -216,7 +216,7 @@ if 'scraping_done' not in st.session_state: st.session_state.scraping_done = Fal
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
 with st.sidebar:
-    st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
+    
     st.header("⚙️ 連結與登入設定")
     saved_creds = load_credentials()
     saved_username = saved_creds.get("username", "")
@@ -227,7 +227,7 @@ with st.sidebar:
     remember_me = st.checkbox("記住我 (下次自動填入帳密)")
     st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
     
-st.title("🚚 WMS 網頁資料擷取工具")
+st.title("🚚 WMS 物流資料擷取工具")
 st.markdown("---")
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
 
@@ -284,3 +284,4 @@ if st.session_state.scraping_done:
                           file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
         st.download_button(label="下載 TXT 檔案 (含摘要)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
                           file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
+
