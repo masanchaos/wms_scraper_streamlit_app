@@ -1,7 +1,5 @@
 import streamlit as st
 import pandas as pd
-import pyperclip
-import datetime
 import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -9,10 +7,9 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# 核心爬蟲與資料處理邏輯
+# 偵錯專用爬蟲邏輯
 # =================================================================================
 
 class WmsScraper:
@@ -27,7 +24,7 @@ class WmsScraper:
             self.status_callback(message)
 
     def _login(self, driver):
-        self._update_status("  > 正在前往登入頁面...")
+        self._update_status("  > [診斷模式] 正在前往登入頁面...")
         driver.get(self.url)
         account_xpath = "//input[@placeholder='example@jenjan.com.tw']"
         password_xpath = "//input[@type='password']"
@@ -39,26 +36,13 @@ class WmsScraper:
         password_input.send_keys(self.password)
         password_input.send_keys(Keys.ENTER)
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "app")))
-        self._update_status("✅ [成功] 登入完成！")
-        self._update_status("  > 等待主頁面穩定...")
-        time.sleep(5)
+        self._update_status("✅ [診斷模式] 登入成功！")
 
-    def _navigate_to_picking_complete(self, driver):
-        self._update_status("  > 尋找「揀貨管理」菜單...")
-        picking_management_xpath = "//a[.//div[text()='揀貨管理']]"
-        # 故意只用 WebDriverWait，讓它在找不到時拋出錯誤，以便被 run() 中的 except 捕捉
-        WebDriverWait(driver, 15).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath))).click()
-
-        self._update_status("  > 點擊「揀包完成」分頁按鈕...")
-        picking_complete_tab_xpath = "//div[contains(@class, 'btn') and contains(., '揀包完成')]"
-        WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
-        self._update_status("✅ [成功] 已進入揀包完成頁面！")
-        
-    def _scrape_data(self, driver):
-        # 這個偵錯版本不會執行到這一步
-        pass
-
-    def run(self):
+    def run_diagnostic(self):
+        """
+        這是一個專為偵錯設計的執行流程。
+        它會在嘗試點擊任何東西之前，就先擷取頁面原始碼。
+        """
         chrome_options = Options()
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         chrome_options.add_argument("--headless")
@@ -68,51 +52,55 @@ class WmsScraper:
         
         driver = None
         try:
-            self._update_status("  > 正在初始化 WebDriver...")
+            self._update_status("  > [診斷模式] 正在初始化 WebDriver...")
             driver = webdriver.Chrome(options=chrome_options)
             driver.set_window_size(1920, 1080)
             
+            # 步驟 1: 登入
             self._login(driver)
-            self._navigate_to_picking_complete(driver) # 預期會在此處失敗
             
-            # 如果成功，理論上不會執行到這裡
-            self._update_status("✅ [成功] 所有資料抓取完成！")
-            return pd.DataFrame() # 返回空 DataFrame
-        except Exception as e:
-            # 這是偵錯的關鍵：在拋出任何錯誤之前，先印出頁面原始碼
-            if driver:
-                self._update_status("  > ❗️ 發生錯誤！正在擷取當前頁面 HTML 進行分析...")
-                # 將 HTML 原始碼印到 Streamlit 的日誌中
-                print("\n" + "="*25 + " DEBUG: PAGE SOURCE ON ERROR " + "="*25)
-                print(driver.page_source)
-                print("="*70 + "\n")
-            # 重新拋出原始錯誤，讓 Streamlit 顯示錯誤訊息
-            raise e
+            # 步驟 2: 穩定後，立刻擷取並印出頁面原始碼
+            self._update_status("  > [診斷模式] 登入成功，正在擷取儀表板 HTML 原始碼...")
+            time.sleep(5) # 額外等待確保 JS 渲染
+            
+            # --- 這是本次偵錯的關鍵 ---
+            print("\n" + "="*25 + " DEBUG: DASHBOARD PAGE SOURCE " + "="*25)
+            print(driver.page_source)
+            print("="*70 + "\n")
+            # --- -------------------- ---
+            
+            self._update_status("  > [診斷模式] ✅ HTML 已輸出到日誌。")
+            self._update_status("  > [診斷模式] 現在將嘗試尋找導覽按鈕 (此步驟預期會失敗)...")
+
+            # 步驟 3: 執行會導致失敗的步驟，以便程式停止並顯示日誌
+            picking_management_xpath = "//a[.//div[text()='揀貨管理']]"
+            WebDriverWait(driver, 15).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath))).click()
+
         finally:
             if driver:
                 driver.quit()
 
 # --- Streamlit UI (保持不變) ---
-st.set_page_config(page_title="WMS 資料擷取工具 (偵錯模式)", page_icon="🐞", layout="wide")
-st.title("🐞 WMS 網頁資料擷取工具 (偵錯模式)")
-st.warning("此為偵錯專用版本，目的是在發生錯誤時獲取頁面 HTML 原始碼。")
+st.set_page_config(page_title="WMS 資料擷取工具 (診斷模式)", page_icon="🐞", layout="wide")
+st.title("🐞 WMS 網頁資料擷取工具 (診斷模式)")
+st.warning("此為**最終診斷版本**。請執行並將包含『DASHBOARD PAGE SOURCE』的**完整日誌**回傳。")
 
 with st.sidebar:
     st.header("⚙️ 連結與登入設定")
-    url = st.text_input("目標網頁 URL", value="https://wms.jenjan.com.tw/")
+    url = st.text_input("目標網頁 URL", value="https.://wms.jenjan.com.tw/")
     username = st.text_input("帳號", value="jeff02")
     password = st.text_input("密碼", value="j93559091", type="password")
 
-start_button = st.button("🚀 開始執行偵錯", type="primary", use_container_width=True)
+start_button = st.button("🚀 開始執行最終診斷", type="primary", use_container_width=True)
 
 if start_button:
     status_area = st.empty()
     def streamlit_callback(message): status_area.info(message)
-    with st.spinner("正在執行中，預期會在中途停止並顯示錯誤..."):
+    with st.spinner("正在執行診斷，預期會在中途停止並顯示錯誤..."):
         try:
             scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
-            scraper.run()
+            scraper.run_diagnostic()
         except Exception as e:
             status_area.error("❌ 執行時發生預期中的錯誤，請查看下方日誌：")
             st.exception(e)
-            st.info("請將上方包含「PAGE SOURCE ON ERROR」的完整日誌複製給我，以進行分析。")
+            st.success("✅ 診斷完成！請將上方包含「DASHBOARD PAGE SOURCE」的完整日誌複製給我。")
