@@ -16,7 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# 自訂複製按鈕 (已美化為黃底黑字)
+# 自訂複製按鈕 (已美化)
 # =================================================================================
 def create_copy_button(text_to_copy: str, button_text: str, key: str):
     escaped_text = html.escape(text_to_copy)
@@ -62,7 +62,6 @@ def create_copy_button(text_to_copy: str, button_text: str, key: str):
 # 核心爬蟲邏輯
 # =================================================================================
 class WmsScraper:
-    # ... WmsScraper class 的完整程式碼保持不變 ...
     def __init__(self, url, username, password, status_callback=None):
         self.url = url
         self.username = username
@@ -148,31 +147,45 @@ class WmsScraper:
         finally:
             if driver: driver.quit()
 
-# ... generate_report_text, process_and_output_data, 憑證處理函式保持不變 ...
+# =================================================================================
+# 資料處理與報告生成
+# =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
+    """輔助函式：產生包含優化排版和百分比的摘要和明細文字報告"""
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
         full_report = f"擷取時間: {display_timestamp} (台北時間)\n\n{summary}"
         return summary, full_report
+
     summary_df = df_to_process.groupby('寄送方式', observed=False).size().reset_index(name='數量')
     total_count = len(df_to_process)
+    
+    # --- [主要修改處] ---
     max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
+    
     summary_lines = ["==============================", f"=== {report_title} ===", "=============================="]
     for _, row in summary_df.iterrows():
         if row['數量'] > 0:
             percentage = round((row['數量'] / total_count) * 100) if total_count > 0 else 0
             method_part = f"{row['寄送方式']}:"
-            count_percent_part = f"{row['數量']} ({percentage}%)"
-            line = f"{method_part:<{max_len}} {count_percent_part:>15}"
+            count_part = str(row['數量'])
+            percent_part = f"({percentage}%)"
+            
+            # 使用三個獨立的部分進行對齊，確保間隔和對齊效果
+            line = f"{method_part:<{max_len}} {count_part:>8}    {percent_part}"
             summary_lines.append(line)
+            
     summary_lines.append("------------------------------")
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
+    
     details_text = df_to_process.to_string(index=False)
+    
     full_report_text = (f"擷取時間: {display_timestamp} (台北時間)\n\n{summary_text}\n\n"
                       "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
                       f"{details_text}")
     return summary_text, full_report_text
+
 def process_and_output_data(df, status_callback):
     status_callback("  > 細分組...")
     df['主要運送代碼'] = df['主要運送代碼'].astype(str)
@@ -193,6 +206,7 @@ def process_and_output_data(df, status_callback):
     st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     status_callback("✅ 資料處理完成！")
+
 CREDENTIALS_FILE = "credentials.json"
 def load_credentials():
     if os.path.exists(CREDENTIALS_FILE):
@@ -210,11 +224,11 @@ def clear_credentials():
 # =================================================================================
 
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
-# ... Session State 初始化和側邊欄設定保持不變 ...
 if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'df_filtered' not in st.session_state: st.session_state.df_filtered = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
+
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
@@ -234,17 +248,12 @@ if st.button("🚀 開始擷取資料", type="primary", use_container_width=True
     else: clear_credentials()
     st.session_state.scraping_done = False
     
-    # --- [主要修改處] 進度條 UI ---
     st.markdown("---")
     progress_text = st.empty()
     progress_duck = st.empty()
-    progress_text.text("準備開始... 🐣")
-    progress_duck.image("duck_0.png")
     
     def streamlit_callback(message):
-        # 根據訊息關鍵字更新小鴨進度
-        duck_image = "duck_0.png"
-        text = "準備開始... 🐣"
+        duck_image = "duck_0.png"; text = "準備開始... 🐣"
         if "登入完成" in message:
             duck_image = "duck_1.png"; text = "登入成功，正在導覽頁面... 🏃"
         elif "進入揀包完成頁面" in message:
@@ -253,15 +262,14 @@ if st.button("🚀 開始擷取資料", type="primary", use_container_width=True
             duck_image = "duck_3.png"; text = "資料擷取完畢，正在進行統計... 🥇"
         elif "資料處理完成" in message:
             duck_image = "duck_4.png"; text = "處理完成！🏁"
-        
         progress_text.text(text)
         progress_duck.image(duck_image)
-
+    
     try:
         if not username or not password:
             st.error("❌ 請務必輸入帳號和密碼！")
-            progress_text.empty(); progress_duck.empty()
         else:
+            streamlit_callback("")
             scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
             result_df = scraper.run()
             if not result_df.empty:
@@ -279,7 +287,6 @@ if st.button("🚀 開始擷取資料", type="primary", use_container_width=True
         st.exception(e)
 
 if st.session_state.scraping_done:
-    # ... 結果顯示區 UI 保持不變 ...
     st.markdown("---")
     st.header("📊 擷取結果")
     tab1, tab2 = st.tabs(["📊 指定項目報告", "📋 所有項目報告"])
@@ -293,7 +300,7 @@ if st.session_state.scraping_done:
         with col3:
             st.download_button(label="下載 TXT (指定項目)", data=st.session_state.report_texts.get('filtered_full', '').encode('utf-8'),
                               file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
-        st.text_area("指定項目報告內容", value=st.session_state.report_texts.get('filtered_full', '無資料'), height=500, label_visibility="collapsed")
+        st.text_area("報告內容", value=st.session_state.report_texts.get('filtered_full', '無資料'), height=500, label_visibility="collapsed")
     with tab2:
         st.subheader("所有項目統計與明細")
         col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
@@ -304,4 +311,4 @@ if st.session_state.scraping_done:
         with col3:
             st.download_button(label="下載 TXT (所有資料)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
                               file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
-        st.text_area("所有項目報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed")
+        st.text_area("報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed")
