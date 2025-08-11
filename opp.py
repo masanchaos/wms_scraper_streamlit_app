@@ -208,7 +208,7 @@ def clear_credentials():
 # Streamlit 前端介面
 # =================================================================================
 
-st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
+st.set_page_config(page_title="WMS 物流資料擷取工具", page_icon="🚚", layout="wide")
 
 if 'scraping_done' not in st.session_state:
     st.session_state.scraping_done = False
@@ -218,7 +218,7 @@ if 'report_texts' not in st.session_state:
     st.session_state.report_texts = {}
 
 with st.sidebar:
-    st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
+    
     st.header("⚙️ 連結與登入設定")
     saved_creds = load_credentials()
     saved_username = saved_creds.get("username", "")
@@ -307,3 +307,4 @@ if st.session_state.scraping_done:
             mime='text/plain',
             use_container_width=True
         )
+
