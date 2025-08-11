@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
-# import pyperclip -> REMOVED
 import datetime
 import time
 import json
 import os
+from zoneinfo import ZoneInfo
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -14,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# 核心爬蟲與資料處理邏輯 (與前一版相同)
+# 核心爬蟲邏輯 (與前一版相同)
 # =================================================================================
 
 class WmsScraper:
@@ -116,49 +116,76 @@ class WmsScraper:
             if driver:
                 driver.quit()
 
+# =================================================================================
+# 資料處理與報告生成
+# =================================================================================
+
 def generate_report_text(df_to_process, display_timestamp, report_title):
+    """輔助函式：產生包含百分比的摘要和明細文字報告"""
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
-        full_report = f"擷取時間: {display_timestamp}\n\n{summary}"
+        full_report = f"擷取時間: {display_timestamp} (台北時間)\n\n{summary}"
         return summary, full_report
+
     summary_df = df_to_process.groupby('寄送方式', observed=False).size().reset_index(name='數量')
     total_count = len(df_to_process)
-    summary_lines = ["==============================", f"=== {report_title} ===", "=============================="]
+    
+    summary_lines = [
+        "==============================",
+        f"=== {report_title} ===",
+        "==============================",
+    ]
+    
     for _, row in summary_df.iterrows():
         if row['數量'] > 0:
-            summary_lines.append(f"{row['寄送方式']}: {row['數量']}")
+            percentage = round((row['數量'] / total_count) * 100) if total_count > 0 else 0
+            line = f"{row['寄送方式']}: {row['數量']} ({percentage}%)"
+            summary_lines.append(line)
+            
     summary_lines.append("------------------------------")
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
+    
     details_text = df_to_process.to_string(index=False)
-    full_report_text = (f"擷取時間: {display_timestamp}\n\n{summary_text}\n\n"
-                      "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
-                      f"{details_text}")
+    
+    full_report_text = (
+        f"擷取時間: {display_timestamp} (台北時間)\n\n"
+        f"{summary_text}\n\n"
+        "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
+        f"{details_text}"
+    )
     return summary_text, full_report_text
 
 def process_and_output_data(df, status_callback):
+    """主要處理函式：資料分類、排序、產生報告並儲存到 session state"""
     status_callback("  > 正在進行資料處理...")
+    
     df['主要運送代碼'] = df['主要運送代碼'].astype(str)
     condition = (df['寄送方式'] == '7-11') & (df['主要運送代碼'].str.match(r'^\d', na=False))
     df.loc[condition, '寄送方式'] = '711大物流'
     status_callback("  > ✅ 細分組完成。")
-    now = datetime.datetime.now()
+
+    now = datetime.datetime.now(ZoneInfo("Asia/Taipei"))
     display_timestamp = now.strftime("%Y-%m-%d %H:%M")
+    
     priority_order = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
     all_methods = df['寄送方式'].unique().tolist()
     final_order = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
     df['寄送方式'] = pd.Categorical(df['寄送方式'], categories=final_order, ordered=True)
     df_sorted_all = df.sort_values(by='寄送方式')
+
     default_methods = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
     df_filtered = df_sorted_all[df_sorted_all['寄送方式'].isin(default_methods)]
+    
     st.session_state.report_texts['filtered_summary'], st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")
     st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
+    
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     st.session_state.final_df = df_sorted_all
-    # 移除了自動複製功能
+    
     status_callback("✅ 資料處理完成，請查看下方報告並手動操作。")
 
-# ... 憑證處理函式保持不變 ...
+# ... 憑證處理函式和 Streamlit UI 程式碼保持不變 ...
 CREDENTIALS_FILE = "credentials.json"
 def load_credentials():
     if os.path.exists(CREDENTIALS_FILE):
@@ -175,19 +202,11 @@ def clear_credentials():
     if os.path.exists(CREDENTIALS_FILE):
         os.remove(CREDENTIALS_FILE)
 
-# =================================================================================
-# Streamlit 前端介面
-# =================================================================================
-
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
-
-# --- 初始化 Session State ---
 if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
-# 新增一個 state 來存放要顯示在文字框中的內容
 if 'text_to_copy' not in st.session_state: st.session_state.text_to_copy = ""
-
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
@@ -199,16 +218,14 @@ with st.sidebar:
     password = st.text_input("密碼", value=saved_password, type="password")
     remember_me = st.checkbox("記住我 (下次自動填入帳密)")
     st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
-    
 st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
-
 if start_button:
     if remember_me: save_credentials(username, password)
     else: clear_credentials()
     st.session_state.scraping_done = False
-    st.session_state.text_to_copy = "" # 每次開始時清空
+    st.session_state.text_to_copy = ""
     status_area = st.empty()
     def streamlit_callback(message): status_area.info(message)
     with st.spinner("正在執行中，請勿關閉視窗..."):
@@ -228,7 +245,6 @@ if start_button:
             st.session_state.scraping_done = False
             status_area.error(f"❌ 執行時發生致命錯誤：")
             st.exception(e)
-
 if st.session_state.scraping_done:
     st.markdown("---")
     st.header("📊 擷取結果與操作")
@@ -246,19 +262,12 @@ if st.session_state.scraping_done:
     col1, col2 = st.columns(2)
     with col1:
         st.info("📋 準備複製內容")
-        # --- [主要修改處] ---
         if st.button("準備複製「指定項目」", use_container_width=True):
             st.session_state.text_to_copy = st.session_state.report_texts.get('filtered_full', '')
         if st.button("準備複製「所有項目」", use_container_width=True):
             st.session_state.text_to_copy = st.session_state.report_texts.get('all_full', '')
-        
-        # 如果 text_to_copy 中有內容，就顯示文字框
         if st.session_state.text_to_copy:
-            st.text_area(
-                "⬇️ 請手動複製以下內容 (Ctrl+A 全選, Ctrl+C 複製)", 
-                value=st.session_state.text_to_copy,
-                height=300
-            )
+            st.text_area("⬇️ 請手動複製以下內容 (Ctrl+A 全選, Ctrl+C 複製)", value=st.session_state.text_to_copy, height=300)
     with col2:
         st.info("💾 下載檔案 (所有資料)")
         st.download_button(label="下載 CSV 檔案", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
