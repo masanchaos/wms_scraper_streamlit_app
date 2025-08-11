@@ -2,3 +2,4 @@ streamlit
 selenium
 pandas
 webdriver-manager
+streamlit-copy-button
