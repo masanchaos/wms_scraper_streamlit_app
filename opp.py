@@ -149,16 +149,13 @@ class AutomationTool:
         self._update_status("  > 正在前往蝦皮出貨快手頁面...")
         driver.get(url)
         try:
-            # 情況一：如果沒登入，會顯示提示匡，需要先點擊「登入」連結
-            login_link_xpath = "//a[contains(text(), '登入')]"
+            login_link_xpath = "//a[normalize-space()='登入']"
             login_link = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, login_link_xpath)))
             self._update_status("  > 偵測到尚未登入，點擊「登入」連結...")
             login_link.click()
         except TimeoutException:
-            # 情況二：如果已經在登入頁面，就直接繼續
-            self._update_status("  > 已在登入頁面。")
-        
-        # 現在應該在登入頁面了，開始輸入帳密
+            self._update_status("  > 未找到「登入」連結，假設已在登入頁面。")
+        self._update_status("  > 正在輸入帳號密碼...")
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.NAME, "email"))).send_keys(username)
         driver.find_element(By.NAME, "password").send_keys(password)
         driver.find_element(By.XPATH, "//button[@type='submit']").click()
@@ -186,15 +183,12 @@ class AutomationTool:
             self._update_status("  > 正在點擊「其他用戶」標籤...")
             other_user_tab = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), '其他用戶')]")))
             other_user_tab.click()
-            
             self._update_status("  > 正在尋找 7-11 輸入框...")
             seven_eleven_textarea = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//div[h5[contains(text(), '7-11')]]//textarea")))
-            
             self._update_status(f"  > 找到輸入框，準備貼上 {len(codes_to_process)} 筆代碼...")
             codes_as_string = "\n".join(codes_to_process)
             seven_eleven_textarea.send_keys(codes_as_string)
             self._update_status("  > ✅ 代碼已全部貼上！")
-            
             driver.find_element(By.XPATH, "//button[contains(text(), '產出寄件單')]").click()
             self._update_status("🎉 [完成] 已點擊產出寄件單！請在新分頁中查看結果。")
             time.sleep(5)
@@ -210,7 +204,7 @@ class AutomationTool:
             if driver: driver.quit()
 
 # =================================================================================
-# 資料處理與報告生成 (與前一版相同)
+# 資料處理與報告生成
 # =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
@@ -278,8 +272,10 @@ def clear_credentials(file_path):
 st.set_page_config(page_title="WMS & Shoppy 工具", page_icon="🚚", layout="wide")
 if 'wms_scraping_done' not in st.session_state: st.session_state.wms_scraping_done = False
 if 'seven_eleven_codes' not in st.session_state: st.session_state.seven_eleven_codes = []
-
-# --- 側邊欄 ---
+if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
+if 'df_filtered' not in st.session_state: st.session_state.df_filtered = pd.DataFrame()
+if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
+if 'duck_index' not in st.session_state: st.session_state.duck_index = 0
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     with st.expander("⚙️ WMS 設定", expanded=True):
@@ -338,16 +334,31 @@ with main_tab1:
         st.markdown("---")
         st.header("📊 WMS 擷取結果")
         restab1, restab2 = st.tabs(["📊 指定項目報告", "📋 所有項目報告"])
-        # (結果顯示的 UI 程式碼為了簡潔省略，請使用您現有的版本)
         with restab1:
             st.subheader("指定項目統計與明細")
-            # ...
+            col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
+            with col1: create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "一鍵複製報告", key="copy-btn-filtered")
+            with col2:
+                st.download_button(label="下載 CSV (指定項目)", data=st.session_state.df_filtered.to_csv(index=False, encoding='utf-8-sig'),
+                                  file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
+            with col3:
+                st.download_button(label="下載 TXT (指定項目)", data=st.session_state.report_texts.get('filtered_full', '').encode('utf-8'),
+                                  file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
+            st.text_area("報告內容", value=st.session_state.report_texts.get('filtered_full', '無資料'), height=500, label_visibility="collapsed")
         with restab2:
             st.subheader("所有項目統計與明細")
-            # ...
+            col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
+            with col1: create_copy_button(st.session_state.report_texts.get('all_full', ''), "一鍵複製報告", key="copy-btn-all")
+            with col2:
+                st.download_button(label="下載 CSV (所有資料)", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
+                                  file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
+            with col3:
+                st.download_button(label="下載 TXT (所有資料)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
+                                  file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
+            st.text_area("報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed")
 
 with main_tab2:
-    st.header("步驟二：處理 7-11 / 蝦皮訂單")
+    st.header("步驟二：處理蝦皮出貨快手訂單")
     if not st.session_state.seven_eleven_codes:
         st.info("請先在「WMS 資料擷取」分頁中成功擷取資料，才能啟用此功能。")
     else:
