@@ -165,10 +165,22 @@ class WmsScraper:
             driver.find_element(By.ID, "Password").send_keys(password)
             driver.find_element(By.XPATH, "//button[contains(text(), '登入')]").click()
             self._update_status("✅ [成功] 7-11 登入成功！")
+
             self._update_status("  > 正在輸入電話...")
-            WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.ID, "CPhone"))).send_keys(phone_number)
-            driver.find_element(By.ID, "btnCPhoneSend").click()
+            phone_input = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.ID, "CPhone")))
+            phone_input.send_keys(phone_number)
+            
+            # --- [主要修改處] ---
+            try:
+                # 優先嘗試點擊確認按鈕
+                driver.find_element(By.ID, "btnCPhoneSend").click()
+            except Exception:
+                # 如果點擊失敗，則嘗試按 Enter
+                self._update_status("  > 按鈕點擊失敗，嘗試按 Enter 確認...")
+                phone_input.send_keys(Keys.ENTER)
+                
             self._update_status("✅ [成功] 電話輸入完成！")
+
             self._update_status("  > 準備開始逐筆輸入運送代碼...")
             code_input_xpath = "//input[@id='pcode']"; confirm_button_xpath = "//button[@id='btnSave']"
             WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, code_input_xpath)))
@@ -391,7 +403,6 @@ with tab2:
                         scraper = WmsScraper(status_callback=seven_callback)
                         success = scraper.run_711_order_processing(seven_url, seven_username, seven_password, seven_phone, st.session_state.seven_eleven_codes)
                         if success:
-                            # 成功訊息會由 scraper 內部回傳，這裡可以留空或顯示最終確認
                             pass
                         else:
                             status_area_711.error("❌ 7-11 訂單處理失敗，請查看上方日誌或截圖。")
