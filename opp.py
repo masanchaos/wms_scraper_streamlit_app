@@ -167,20 +167,17 @@ class WmsScraper:
             self._update_status("✅ [成功] 7-11 登入成功！")
 
             self._update_status("  > 正在輸入電話...")
-            phone_input = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.ID, "CPhone")))
+            # --- [主要修改處] ---
+            phone_input = WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.ID, "MobileNumber")))
             phone_input.send_keys(phone_number)
             
-            # --- [主要修改處] ---
             try:
-                # 優先嘗試點擊確認按鈕
                 driver.find_element(By.ID, "btnCPhoneSend").click()
             except Exception:
-                # 如果點擊失敗，則嘗試按 Enter
-                self._update_status("  > 按鈕點擊失敗，嘗試按 Enter 確認...")
                 phone_input.send_keys(Keys.ENTER)
                 
             self._update_status("✅ [成功] 電話輸入完成！")
-
+            
             self._update_status("  > 準備開始逐筆輸入運送代碼...")
             code_input_xpath = "//input[@id='pcode']"; confirm_button_xpath = "//button[@id='btnSave']"
             WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, code_input_xpath)))
@@ -224,9 +221,7 @@ class WmsScraper:
         finally:
             if driver: driver.quit()
 
-# =================================================================================
-# 資料處理與報告生成
-# =================================================================================
+# ... 其他輔助函式 ...
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
@@ -249,7 +244,6 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
                       "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
                       f"{details_text}")
     return summary_text, full_report_text
-
 def process_and_output_data(df, status_callback):
     status_callback("  > 細分組...")
     df['主要運送代碼'] = df['主要運送代碼'].astype(str)
@@ -272,8 +266,6 @@ def process_and_output_data(df, status_callback):
     st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     status_callback("✅ 資料處理完成！")
-
-# ... 憑證處理函式 ...
 CREDENTIALS_FILE_WMS = "credentials_wms.json"
 CREDENTIALS_FILE_711 = "credentials_711.json"
 def load_credentials(file_path):
@@ -298,7 +290,6 @@ if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame(
 if 'df_filtered' not in st.session_state: st.session_state.df_filtered = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
 if 'duck_index' not in st.session_state: st.session_state.duck_index = 0
-
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ WMS 設定")
@@ -402,9 +393,7 @@ with tab2:
                     else:
                         scraper = WmsScraper(status_callback=seven_callback)
                         success = scraper.run_711_order_processing(seven_url, seven_username, seven_password, seven_phone, st.session_state.seven_eleven_codes)
-                        if success:
-                            pass
-                        else:
+                        if not success:
                             status_area_711.error("❌ 7-11 訂單處理失敗，請查看上方日誌或截圖。")
                 except Exception as e:
                     status_area_711.error("❌ 執行 7-11 任務時發生致命錯誤："); st.exception(e)
