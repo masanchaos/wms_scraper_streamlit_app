@@ -12,7 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# 核心爬蟲與資料處理邏輯
+# 核心爬蟲與資料處理邏輯 (移植自您成功的本地端版本)
 # =================================================================================
 
 class WmsScraper:
@@ -41,37 +41,27 @@ class WmsScraper:
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "app")))
         self._update_status("✅ [成功] 登入完成！")
         self._update_status("  > 等待主頁面穩定...")
-        time.sleep(5)
+        time.sleep(5) # 為雲端環境增加穩定性等待
 
     def _navigate_to_picking_complete(self, driver):
         self._update_status("  > 尋找「揀貨管理」菜單...")
         picking_management_xpath = "//a[.//div[text()='揀貨管理']]"
         try:
-            picking_management_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath)))
-            self._update_status("  > 「揀貨管理」菜單可見，直接點擊。")
+            picking_management_button = WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath)))
             picking_management_button.click()
-        except TimeoutException:
-            self._update_status("  > 未直接找到菜單，嘗試點擊漢堡選單展開...")
-            hamburger_xpaths = ["//button[contains(@class, 'navbar-toggler')]", "//button[contains(@class, 'menu-toggle')]", "//a[contains(@class, 'menu-toggle')]", "//button[@aria-label='menu']", "//i[contains(@class, 'fa-bars')]/..", "//div[contains(@class, 'menu-icon')]"]
-            hamburger_found_and_clicked = False
-            for xpath in hamburger_xpaths:
-                try:
-                    hamburger_button = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, xpath)))
-                    driver.execute_script("arguments[0].click();", hamburger_button)
-                    self._update_status(f"  > ✅ 已點擊漢堡選單。")
-                    hamburger_found_and_clicked = True
-                    time.sleep(2)
-                    break
-                except TimeoutException:
-                    continue
-            if not hamburger_found_and_clicked:
-                raise NoSuchElementException("無法找到『揀貨管理』菜單，也找不到可展開的漢堡選單。")
-            self._update_status("  > 漢堡選單已展開，再次尋找「揀貨管理」...")
-            picking_management_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath)))
-            picking_management_button.click()
-        self._update_status("  > 正在等待分頁區塊載入...")
+        except (TimeoutException, ElementClickInterceptedException):
+            try:
+                self._update_status("  > 標準點擊失敗，嘗試備用方法...")
+                picking_management_button = driver.find_element(By.XPATH, picking_management_xpath)
+                driver.execute_script("arguments[0].click();", picking_management_button)
+            except Exception as e:
+                self._update_status("  > ❗️ 致命錯誤：所有導航方法均失敗。")
+                raise e
+
+        self._update_status("  > 等待分頁區塊載入...")
         default_tab_xpath = "//div[contains(@class, 'btn') and contains(., '未揀訂單')]"
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, default_tab_xpath)))
+        
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and contains(., '揀包完成')]"
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
@@ -82,6 +72,7 @@ class WmsScraper:
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
         WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'list-items')]/div[contains(@class, 'item')]")))
         self._update_status("  > 資料已初步載入。")
+        
         all_data = []
         page_count = 1
         while True:
@@ -132,21 +123,16 @@ class WmsScraper:
             self._update_status("✅ [成功] 所有資料抓取完成！")
             return pd.DataFrame(data)
         except Exception as e:
-            # 在拋出任何錯誤之前，先印出頁面原始碼
             if driver:
                 self._update_status("  > ❗️ 發生錯誤！正在擷取當前頁面 HTML 進行分析...")
                 print("\n" + "="*25 + " DEBUG: PAGE SOURCE ON ERROR " + "="*25)
-                # 使用 st.code 來美化輸出，如果這個函式在 Streamlit 主線程外
-                # 簡單的 print 也能輸出到日誌
                 print(driver.page_source)
                 print("="*70 + "\n")
-            # 重新拋出原始錯誤，讓 Streamlit 知道發生了問題
             raise e
         finally:
             if driver:
                 driver.quit()
 
-# ... generate_report_text 和 Streamlit UI 程式碼保持不變 ...
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
@@ -167,10 +153,47 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
                       f"{details_text}")
     return summary_text, full_report_text
 
+def process_and_output_data(df, status_callback):
+    status_callback("  > 正在進行 7-11 細分組...")
+    df['主要運送代碼'] = df['主要運送代碼'].astype(str)
+    condition = (df['寄送方式'] == '7-11') & (df['主要運送代碼'].str.match(r'^\d', na=False))
+    df.loc[condition, '寄送方式'] = '711大物流'
+    status_callback("  > ✅ 細分組完成。")
+    
+    now = datetime.datetime.now()
+    display_timestamp = now.strftime("%Y-%m-%d %H:%M")
+    
+    priority_order = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
+    all_methods = df['寄送方式'].unique().tolist()
+    final_order = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
+    df['寄送方式'] = pd.Categorical(df['寄送方式'], categories=final_order, ordered=True)
+    df_sorted_all = df.sort_values(by='寄送方式')
+
+    default_methods = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
+    df_filtered = df_sorted_all[df_sorted_all['寄送方式'].isin(default_methods)]
+    
+    st.session_state.report_texts['filtered_summary'], st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")
+    st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
+    
+    st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
+    st.session_state.final_df = df_sorted_all
+    
+    try:
+        pyperclip.copy(st.session_state.report_texts['filtered_full'])
+        status_callback("✅ 預設項目已自動複製到剪貼簿！")
+    except pyperclip.PyperclipException:
+        status_callback("❗️ 自動複製到剪貼簿失敗。您的環境可能不支援此操作。")
+
+# =================================================================================
+# Streamlit 前端介面
+# =================================================================================
+
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
+
 if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
+
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
@@ -178,35 +201,24 @@ with st.sidebar:
     username = st.text_input("帳號", value="jeff02")
     password = st.text_input("密碼", value="j93559091", type="password")
     st.info("請確認設定無誤後，點擊主畫面的「開始擷取」按鈕。")
+
 st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
+
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
+
 if start_button:
     st.session_state.scraping_done = False
     status_area = st.empty()
     def streamlit_callback(message): status_area.info(message)
+    
     with st.spinner("正在執行中，請勿關閉視窗..."):
         try:
             scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
             result_df = scraper.run()
             if not result_df.empty:
-                streamlit_callback("  > 正在進行資料排序與分類...")
-                now = datetime.datetime.now()
-                display_timestamp = now.strftime("%Y-%m-%d %H:%M")
-                result_df['主要運送代碼'] = result_df['主要運送代碼'].astype(str)
-                condition = (result_df['寄送方式'] == '7-11') & (result_df['主要運送代碼'].str.match(r'^\d', na=False))
-                result_df.loc[condition, '寄送方式'] = '711大物流'
-                priority_order = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
-                all_methods = result_df['寄送方式'].unique().tolist()
-                final_order = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
-                result_df['寄送方式'] = pd.Categorical(result_df['寄送方式'], categories=final_order, ordered=True)
-                df_sorted_all = result_df.sort_values(by='寄送方式')
-                default_methods = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
-                df_filtered = df_sorted_all[df_sorted_all['寄送方式'].isin(default_methods)]
-                st.session_state.report_texts['filtered_summary'], st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")
-                st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
-                st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
-                st.session_state.final_df = df_sorted_all
+                streamlit_callback("  > 正在進行資料處理...")
+                process_and_output_data(result_df, streamlit_callback)
                 st.session_state.scraping_done = True
                 status_area.success("🎉 所有任務完成！請查看下方的結果。")
             else:
@@ -215,6 +227,7 @@ if start_button:
             st.session_state.scraping_done = False
             status_area.error("❌ 執行時發生致命錯誤：")
             st.exception(e)
+
 if st.session_state.scraping_done:
     st.markdown("---")
     st.header("📊 擷取結果")
