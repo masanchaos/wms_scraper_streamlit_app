@@ -163,7 +163,6 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
         if row['數量'] > 0:
             method_part = f"{row['寄送方式']}:"
             count_part = str(row['數量'])
-            # 移除百分比，並確保數量靠右對齊
             line = f"{method_part:<{max_len}} {count_part:>8}"
             summary_lines.append(line)
     summary_lines.append("------------------------------")
@@ -242,22 +241,20 @@ if st.button("🚀 開始擷取資料", type="primary", use_container_width=True
     progress_duck = st.empty()
     
     # --- [主要修改處] 進度條動畫邏輯 ---
-    duck_index = 0
+    st.session_state.duck_index = 0
     duck_images = ["duck_0.png", "duck_1.png", "duck_2.png", "duck_3.png", "duck_4.png"]
     
     def streamlit_callback(message):
-        nonlocal duck_index
-        text = message.replace("  > ", "").replace("...", "") # 簡化文字
+        text = message.replace("  > ", "").replace("...", "")
         
-        # 狀態推進邏輯
-        if "登入完成" in message and duck_index < 1: duck_index = 1
-        elif "進入揀包完成頁面" in message and duck_index < 2: duck_index = 2
-        elif "所有頁面資料抓取完畢" in message and duck_index < 3: duck_index = 3
-        elif "資料處理完成" in message and duck_index < 4: duck_index = 4
+        # 狀態推進邏輯 (只前進不後退)
+        if "登入完成" in message and st.session_state.duck_index < 1: st.session_state.duck_index = 1
+        elif "進入揀包完成頁面" in message and st.session_state.duck_index < 2: st.session_state.duck_index = 2
+        elif "所有頁面資料抓取完畢" in message and st.session_state.duck_index < 3: st.session_state.duck_index = 3
+        elif "資料處理完成" in message and st.session_state.duck_index < 4: st.session_state.duck_index = 4
         
-        # 更新 UI
         progress_text.text(f"{text}...")
-        progress_duck.image(duck_images[duck_index])
+        progress_duck.image(duck_images[st.session_state.duck_index])
     
     try:
         if not username or not password:
