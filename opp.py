@@ -26,7 +26,6 @@ class WmsScraper:
         if self.status_callback:
             self.status_callback(message)
 
-    # ... _login, _navigate_to_picking_complete, _scrape_data 方法保持不變 ...
     def _login(self, driver):
         self._update_status("  > 正在前往登入頁面...")
         driver.get(self.url)
@@ -41,16 +40,31 @@ class WmsScraper:
         password_input.send_keys(Keys.ENTER)
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "app")))
         self._update_status("✅ [成功] 登入完成！")
+        
+        # --- [修改點 1] ---
+        # 登入後強制等待5秒，給予頁面充足的渲染時間
+        self._update_status("  > 等待主頁面穩定...")
+        time.sleep(5)
+
 
     def _navigate_to_picking_complete(self, driver):
-        self._update_status("  > 正在導航至目標頁面...")
+        self._update_status("  > 點擊「揀貨管理」菜單...")
         picking_management_xpath = "//a[.//div[text()='揀貨管理']]"
         try:
-            picking_management_button = WebDriverWait(driver, 15).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath)))
+            # --- [修改點 2] 將等待時間從 15 秒延長到 30 秒 ---
+            picking_management_button = WebDriverWait(driver, 30).until(
+                EC.element_to_be_clickable((By.XPATH, picking_management_xpath))
+            )
             picking_management_button.click()
-        except (TimeoutException, ElementClickInterceptedException):
-            picking_management_button = driver.find_element(By.XPATH, picking_management_xpath)
-            driver.execute_script("arguments[0].click();", picking_management_button)
+        except (TimeoutException, ElementClickInterceptedException) as e:
+            # 如果還是找不到，嘗試用 JS 點擊 (作為備用方案)
+            self._update_status("  > 標準點擊失敗，嘗試使用備用方法...")
+            try:
+                picking_management_button = driver.find_element(By.XPATH, picking_management_xpath)
+                driver.execute_script("arguments[0].click();", picking_management_button)
+            except Exception as js_e:
+                 self._update_status(f"  > 備用方法也失敗: {js_e}")
+                 raise e # 拋出原始錯誤
         
         default_tab_xpath = "//div[contains(@class, 'btn') and contains(., '未揀訂單')]"
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, default_tab_xpath)))
@@ -104,10 +118,6 @@ class WmsScraper:
         chrome_options = Options()
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         
-        # ================================================================================
-        # !!! 部署到 STREAMLIT CLOUD 的關鍵設定 !!!
-        # 在雲端執行時，必須啟用 Headless 無頭模式，否則會失敗
-        # ================================================================================
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
@@ -116,9 +126,8 @@ class WmsScraper:
         driver = None
         try:
             self._update_status("  > 正在初始化 WebDriver...")
-            # 在 Streamlit Cloud 上，Selenium Manager 會自動處理 chromium-driver
             driver = webdriver.Chrome(options=chrome_options)
-            driver.set_window_size(1920, 1080) # 在無頭模式下建議設定視窗大小
+            driver.set_window_size(1920, 1080)
             
             self._login(driver)
             self._navigate_to_picking_complete(driver)
@@ -133,6 +142,7 @@ class WmsScraper:
                 driver.quit()
 
 # ... generate_report_text 和 Streamlit UI 程式碼保持不變 ...
+# (以下省略未變動的程式碼，請您直接在您的檔案中修改上面標示的兩個地方即可)
 def generate_report_text(df_to_process, display_timestamp, report_title):
     """輔助函式：產生文字報告"""
     if df_to_process.empty:
@@ -234,7 +244,7 @@ if start_button:
 
         except Exception as e:
             st.session_state.scraping_done = False
-            status_area.error(f"❌ 執行時發生致命錯誤：\n{e}")
+            status_area.error(f"❌ 執行時發生致命錯誤：")
             st.exception(e)
 
 if st.session_state.scraping_done:
