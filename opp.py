@@ -228,7 +228,7 @@ with st.sidebar:
     password = st.text_input("密碼", value=saved_password, type="password")
     remember_me = st.checkbox("記住我 (下次自動填入帳密)")
     st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。")
-st.title("🚚 WMS 網頁資料擷取工具")
+st.title("🚚 WMS 物流資料擷取工具 by JeffMa")
 st.markdown("---")
 
 if st.button("🚀 開始擷取資料", type="primary", use_container_width=True):
@@ -303,4 +303,5 @@ if st.session_state.scraping_done:
             st.download_button(label="下載 TXT (所有資料)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
                               file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
         st.text_area("報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed")
+
 
