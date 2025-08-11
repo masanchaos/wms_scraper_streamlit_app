@@ -151,36 +151,25 @@ class WmsScraper:
 # 資料處理與報告生成
 # =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
-    """輔助函式：產生包含優化排版和百分比的摘要和明細文字報告"""
     if df_to_process.empty:
         summary = f"--- {report_title} ---\n\n指定條件下無資料。"
         full_report = f"擷取時間: {display_timestamp} (台北時間)\n\n{summary}"
         return summary, full_report
-
     summary_df = df_to_process.groupby('寄送方式', observed=False).size().reset_index(name='數量')
     total_count = len(df_to_process)
-    
-    # --- [主要修改處] ---
     max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
-    
     summary_lines = ["==============================", f"=== {report_title} ===", "=============================="]
     for _, row in summary_df.iterrows():
         if row['數量'] > 0:
-            percentage = round((row['數量'] / total_count) * 100) if total_count > 0 else 0
             method_part = f"{row['寄送方式']}:"
             count_part = str(row['數量'])
-            percent_part = f"({percentage}%)"
-            
-            # 使用三個獨立的部分進行對齊，確保間隔和對齊效果
-            line = f"{method_part:<{max_len}} {count_part:>8}    {percent_part}"
+            # 移除百分比，並確保數量靠右對齊
+            line = f"{method_part:<{max_len}} {count_part:>8}"
             summary_lines.append(line)
-            
     summary_lines.append("------------------------------")
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
-    
     details_text = df_to_process.to_string(index=False)
-    
     full_report_text = (f"擷取時間: {display_timestamp} (台北時間)\n\n{summary_text}\n\n"
                       "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
                       f"{details_text}")
@@ -207,6 +196,7 @@ def process_and_output_data(df, status_callback):
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     status_callback("✅ 資料處理完成！")
 
+# ... 憑證處理函式 ...
 CREDENTIALS_FILE = "credentials.json"
 def load_credentials():
     if os.path.exists(CREDENTIALS_FILE):
@@ -228,7 +218,6 @@ if 'scraping_done' not in st.session_state: st.session_state.scraping_done = Fal
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'df_filtered' not in st.session_state: st.session_state.df_filtered = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
-
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
@@ -252,24 +241,29 @@ if st.button("🚀 開始擷取資料", type="primary", use_container_width=True
     progress_text = st.empty()
     progress_duck = st.empty()
     
+    # --- [主要修改處] 進度條動畫邏輯 ---
+    duck_index = 0
+    duck_images = ["duck_0.png", "duck_1.png", "duck_2.png", "duck_3.png", "duck_4.png"]
+    
     def streamlit_callback(message):
-        duck_image = "duck_0.png"; text = "準備開始... 🐣"
-        if "登入完成" in message:
-            duck_image = "duck_1.png"; text = "登入成功，正在導覽頁面... 🏃"
-        elif "進入揀包完成頁面" in message:
-            duck_image = "duck_2.png"; text = "導覽成功，準備擷取資料... 💨"
-        elif "所有頁面資料抓取完畢" in message:
-            duck_image = "duck_3.png"; text = "資料擷取完畢，正在進行統計... 🥇"
-        elif "資料處理完成" in message:
-            duck_image = "duck_4.png"; text = "處理完成！🏁"
-        progress_text.text(text)
-        progress_duck.image(duck_image)
+        nonlocal duck_index
+        text = message.replace("  > ", "").replace("...", "") # 簡化文字
+        
+        # 狀態推進邏輯
+        if "登入完成" in message and duck_index < 1: duck_index = 1
+        elif "進入揀包完成頁面" in message and duck_index < 2: duck_index = 2
+        elif "所有頁面資料抓取完畢" in message and duck_index < 3: duck_index = 3
+        elif "資料處理完成" in message and duck_index < 4: duck_index = 4
+        
+        # 更新 UI
+        progress_text.text(f"{text}...")
+        progress_duck.image(duck_images[duck_index])
     
     try:
         if not username or not password:
             st.error("❌ 請務必輸入帳號和密碼！")
         else:
-            streamlit_callback("")
+            streamlit_callback("準備開始... 🐣")
             scraper = WmsScraper(url, username, password, status_callback=streamlit_callback)
             result_df = scraper.run()
             if not result_df.empty:
