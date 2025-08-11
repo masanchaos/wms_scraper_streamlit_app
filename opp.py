@@ -167,7 +167,7 @@ def clear_credentials():
 # Streamlit 前端介面設計 (已更新)
 # =================================================================================
 
-st.set_page_config(page_title="WMS 物流資料擷取工具", page_icon="🚚", layout="wide")
+st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
 
 # --- 初始化 Session State ---
 if 'scraping_done' not in st.session_state:
@@ -179,7 +179,7 @@ if 'report_texts' not in st.session_state:
 
 # --- 側邊欄：設定區 (已更新) ---
 with st.sidebar:
-    
+    st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
 
     # 載入已儲存的憑證
