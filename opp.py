@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import pyperclip
+# import pyperclip -> REMOVED
 import datetime
 import time
 import json
@@ -14,20 +14,19 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
 
 # =================================================================================
-# 核心爬蟲邏輯 (已整合雙語容錯功能)
+# 核心爬蟲與資料處理邏輯 (與前一版相同)
 # =================================================================================
 
 class WmsScraper:
+    # ... WmsScraper class 的完整程式碼保持不變 ...
     def __init__(self, url, username, password, status_callback=None):
         self.url = url
         self.username = username
         self.password = password
         self.status_callback = status_callback
-
     def _update_status(self, message):
         if self.status_callback:
             self.status_callback(message)
-
     def _login(self, driver):
         self._update_status("  > 正在前往登入頁面...")
         driver.get(self.url)
@@ -44,44 +43,30 @@ class WmsScraper:
         self._update_status("✅ [成功] 登入完成！")
         self._update_status("  > 等待主頁面穩定...")
         time.sleep(5)
-
     def _navigate_to_picking_complete(self, driver):
         self._update_status("  > 尋找導覽菜單...")
-        
-        # --- [最終修正] ---
-        # 核心修正：不再使用中文文字 `揀貨管理` 來定位
-        # 改用絕對不會因語言而變的連結 href="/admin/pickup"
         picking_management_xpath = "//a[@href='/admin/pickup']"
-        
         try:
-            # 延長等待時間以應對雲端延遲
             picking_management_button = WebDriverWait(driver, 30).until(
                 EC.element_to_be_clickable((By.XPATH, picking_management_xpath))
             )
             picking_management_button.click()
         except Exception as e:
-            self._update_status("  > ❗️ 致命錯誤：無法找到或點擊導覽菜單(href='/admin/pickup')。")
+            self._update_status("  > ❗️ 致命錯誤：無法找到或點擊導覽菜單。")
             raise e
-
         self._update_status("  > 正在等待分頁區塊載入...")
-        # 雙語容錯：讓程式同時識別中文或可能的英文("Unpicked")
         default_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '未揀訂單') or contains(., 'Unpicked'))]"
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, default_tab_xpath)))
-        
         self._update_status("  > 點擊「揀包完成」分頁按鈕...")
-        # 雙語容錯：讓程式同時識別中文或可能的英文("Complete")
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Complete'))]"
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
-        
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
-        # 這個按鈕的 class 通常是固定的，不受語言影響
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
         WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'list-items')]/div[contains(@class, 'item')]")))
         self._update_status("  > 資料已初步載入。")
-        
         all_data = []
         page_count = 1
         while True:
@@ -100,7 +85,6 @@ class WmsScraper:
                         all_data.append({"寄送方式": shipping_method, "主要運送代碼": tracking_code})
                 except Exception: continue
             try:
-                # 雙語容錯：讓程式同時識別中文的「下一頁」和英文的 "Next"
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button = driver.find_element(By.XPATH, next_button_xpath)
                 if next_button.get_attribute('disabled'): break
@@ -110,7 +94,6 @@ class WmsScraper:
                     WebDriverWait(driver, 10).until(EC.staleness_of(rows[0]))
             except Exception: break
         return all_data
-
     def run(self):
         chrome_options = Options()
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
@@ -118,27 +101,20 @@ class WmsScraper:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
-        
         driver = None
         try:
             self._update_status("  > 正在初始化 WebDriver...")
             driver = webdriver.Chrome(options=chrome_options)
             driver.set_window_size(1920, 1080)
-            
             self._login(driver)
             self._navigate_to_picking_complete(driver)
             time.sleep(3)
             data = self._scrape_data(driver)
-            
             self._update_status("✅ [成功] 所有資料抓取完成！")
             return pd.DataFrame(data)
         finally:
             if driver:
                 driver.quit()
-
-# =================================================================================
-# 資料處理與報告生成 (與前一版相同)
-# =================================================================================
 
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
@@ -179,17 +155,11 @@ def process_and_output_data(df, status_callback):
     st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     st.session_state.final_df = df_sorted_all
-    try:
-        pyperclip.copy(st.session_state.report_texts['filtered_full'])
-        status_callback("✅ 預設項目已自動複製到剪貼簿！")
-    except pyperclip.PyperclipException:
-        status_callback("❗️ 自動複製到剪貼簿失敗。您的環境可能不支援此操作。")
+    # 移除了自動複製功能
+    status_callback("✅ 資料處理完成，請查看下方報告並手動操作。")
 
-# =================================================================================
-# 憑證處理函式 (與前一版相同)
-# =================================================================================
+# ... 憑證處理函式保持不變 ...
 CREDENTIALS_FILE = "credentials.json"
-
 def load_credentials():
     if os.path.exists(CREDENTIALS_FILE):
         try:
@@ -198,25 +168,28 @@ def load_credentials():
         except (json.JSONDecodeError, FileNotFoundError):
             return {}
     return {}
-
 def save_credentials(username, password):
     with open(CREDENTIALS_FILE, 'w') as f:
         json.dump({"username": username, "password": password}, f)
-
 def clear_credentials():
     if os.path.exists(CREDENTIALS_FILE):
         os.remove(CREDENTIALS_FILE)
 
 # =================================================================================
-# Streamlit 前端介面 (與前一版相同)
+# Streamlit 前端介面
 # =================================================================================
 
 st.set_page_config(page_title="WMS 資料擷取工具", page_icon="🚚", layout="wide")
+
+# --- 初始化 Session State ---
 if 'scraping_done' not in st.session_state: st.session_state.scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
+# 新增一個 state 來存放要顯示在文字框中的內容
+if 'text_to_copy' not in st.session_state: st.session_state.text_to_copy = ""
+
 with st.sidebar:
-    
+    st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     st.header("⚙️ 連結與登入設定")
     saved_creds = load_credentials()
     saved_username = saved_creds.get("username", "")
@@ -227,7 +200,7 @@ with st.sidebar:
     remember_me = st.checkbox("記住我 (下次自動填入帳密)")
     st.warning("⚠️ **安全性提醒**:\n勾選「記住我」會將帳密以可讀取的形式保存在伺服器上。僅在您信任此服務且帳號非高度敏感的情況下使用。")
     
-st.title("🚚 WMS 物流資料擷取工具")
+st.title("🚚 WMS 網頁資料擷取工具")
 st.markdown("---")
 start_button = st.button("🚀 開始擷取資料", type="primary", use_container_width=True)
 
@@ -235,6 +208,7 @@ if start_button:
     if remember_me: save_credentials(username, password)
     else: clear_credentials()
     st.session_state.scraping_done = False
+    st.session_state.text_to_copy = "" # 每次開始時清空
     status_area = st.empty()
     def streamlit_callback(message): status_area.info(message)
     with st.spinner("正在執行中，請勿關閉視窗..."):
@@ -271,17 +245,23 @@ if st.session_state.scraping_done:
     st.header("🚀 操作按鈕")
     col1, col2 = st.columns(2)
     with col1:
-        st.info("📋 複製到剪貼簿")
-        if st.button("複製「指定項目」統計與明細", use_container_width=True):
-            pyperclip.copy(st.session_state.report_texts.get('filtered_full', ''))
-            st.success("已複製指定項目內容！")
-        if st.button("複製「所有項目」統計與明細", use_container_width=True):
-            pyperclip.copy(st.session_state.report_texts.get('all_full', ''))
-            st.success("已複製所有項目內容！")
+        st.info("📋 準備複製內容")
+        # --- [主要修改處] ---
+        if st.button("準備複製「指定項目」", use_container_width=True):
+            st.session_state.text_to_copy = st.session_state.report_texts.get('filtered_full', '')
+        if st.button("準備複製「所有項目」", use_container_width=True):
+            st.session_state.text_to_copy = st.session_state.report_texts.get('all_full', '')
+        
+        # 如果 text_to_copy 中有內容，就顯示文字框
+        if st.session_state.text_to_copy:
+            st.text_area(
+                "⬇️ 請手動複製以下內容 (Ctrl+A 全選, Ctrl+C 複製)", 
+                value=st.session_state.text_to_copy,
+                height=300
+            )
     with col2:
         st.info("💾 下載檔案 (所有資料)")
         st.download_button(label="下載 CSV 檔案", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
                           file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
         st.download_button(label="下載 TXT 檔案 (含摘要)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
                           file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
-
