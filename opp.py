@@ -7,22 +7,32 @@ import os
 import re
 import base64
 import io
-import pdfplumber # Make sure to install this library: pip install pdfplumber
+import html
+
+# 核心函式庫，請確保已安裝 (pip install ...)
+import pdfplumber 
 from zoneinfo import ZoneInfo
 import streamlit.components.v1 as components
-import html
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException, StaleElementReferenceException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
+
+# --- 【重要修正】---
+# 使用 webdriver-manager 自動下載並管理 chromedriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+# --- 【修正結束】---
+
 
 # =================================================================================
 # 自訂複製按鈕
 # =================================================================================
 def create_copy_button(text_to_copy: str, button_text: str, key: str):
+    """在 Streamlit 中建立一個自訂樣式的 HTML 複製按鈕"""
     escaped_text = html.escape(text_to_copy)
     button_html = f"""
     <html><head><style>
@@ -65,16 +75,22 @@ def create_copy_button(text_to_copy: str, button_text: str, key: str):
 class AutomationTool:
     def __init__(self, status_callback=None):
         self.status_callback = status_callback
+
     def _update_status(self, message):
         if self.status_callback: self.status_callback(message)
+
+    # --- 【重要修正】---
+    # 這個函數已被更新，使用 webdriver-manager 來提高穩定性
     def _initialize_driver(self):
+        """初始化 WebDriver，並自動下載/管理對應的 chromedriver"""
         chrome_options = Options()
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-        # Settings for direct PDF printing
+        
+        # 設定直接列印為 PDF，無需開啟預覽對話框
         settings = {
            "recentDestinations": [{"id": "Save as PDF", "origin": "local", "account": ""}],
            "selectedDestinationId": "Save as PDF",
@@ -82,15 +98,21 @@ class AutomationTool:
         }
         prefs = {
             'printing.print_preview_sticky_settings.appState': json.dumps(settings),
-            'savefile.default_directory': '/tmp' # Use a temporary directory
+            'savefile.default_directory': '/tmp' # 在無頭模式下指定一個臨時目錄
         }
         chrome_options.add_experimental_option('prefs', prefs)
         chrome_options.add_argument('--kiosk-printing')
 
-        self._update_status("  > 初始化 WebDriver...")
-        driver = webdriver.Chrome(options=chrome_options)
+        self._update_status("  > 初始化 WebDriver (自動下載驅動程式)...")
+        
+        # 使用 webdriver-manager 自動安裝與設定 chromedriver
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        
         driver.set_window_size(1920, 1080)
+        self._update_status("  > WebDriver 初始化完成。")
         return driver
+    # --- 【修正結束】---
 
     # --- WMS Methods ---
     def _login_wms(self, driver, url, username, password):
@@ -106,6 +128,7 @@ class AutomationTool:
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "page-container")))
         self._update_status("✅ [成功] WMS 登入完成！")
         time.sleep(3)
+
     def _navigate_to_picking_complete(self, driver):
         self._update_status("  > 尋找導覽菜單...")
         picking_management_xpath = "//a[@href='/admin/pickup']"
@@ -117,6 +140,7 @@ class AutomationTool:
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Complete'))]"
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
+
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
@@ -155,7 +179,7 @@ class AutomationTool:
                         self._update_status(f"  > 第 {page_count} 頁內容已成功刷新。")
                         break
                     time.sleep(0.5)
-            except Exception as e:
+            except Exception:
                 self._update_status(f"  > 未找到下一頁按鈕或翻頁失敗，抓取結束。")
                 break
         self._update_status("  > 所有頁面資料抓取完畢。")
@@ -167,7 +191,6 @@ class AutomationTool:
         driver.get(url)
         wait = WebDriverWait(driver, 20)
         try:
-            # First, try to find the main login link on the homepage
             login_link = wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "登入")))
             login_link.click()
             self._update_status("  > 已點擊登入連結。")
@@ -175,13 +198,11 @@ class AutomationTool:
             self._update_status("  > 未找到登入連結，假設已在登入頁面。")
 
         self._update_status("  > 正在輸入帳號密碼...")
-        # Wait for the login form to be ready
         email_input = wait.until(EC.visibility_of_element_located((By.ID, "username")))
         email_input.send_keys(username)
         password_input = driver.find_element(By.ID, "password")
         password_input.send_keys(password)
         driver.find_element(By.NAME, "login").click()
-        # Wait for a known element on the post-login page
         wait.until(EC.presence_of_element_located((By.PARTIAL_LINK_TEXT, "其他用戶")))
         self._update_status("✅ [成功] 蝦皮出貨快手登入成功！")
 
@@ -201,9 +222,6 @@ class AutomationTool:
         finally:
             if driver: driver.quit()
 
-    # =========================================================================
-    # START: NEW, FULLY INTEGRATED NiceShoppy Automation Function
-    # =========================================================================
     def run_niceshoppy_automation(self, url, username, password, codes_to_process):
         driver = None
         try:
@@ -250,10 +268,10 @@ class AutomationTool:
             driver.find_element(By.XPATH, submit_button_xpath).click()
             
             self._update_status(f"  > 步驟 4: 正在等待新任務生成 (ID需大於 {max_existing_id})...")
-            long_wait = WebDriverWait(driver, 120) # 2 minute timeout for new task
+            long_wait = WebDriverWait(driver, 120)
             def find_new_task_with_scroll(driver):
                 links = driver.find_elements(By.XPATH, "//a[contains(@href, 'task_id=')]")
-                for link in reversed(links): # Check from bottom up, likely faster
+                for link in reversed(links):
                     try:
                         href = link.get_attribute('href')
                         if href:
@@ -270,7 +288,7 @@ class AutomationTool:
 
             self._update_status(f"  > 步驟 5: 正在等待任務 ID {new_task_id} 的列印按鈕變為可用...")
             print_button_xpath = f"//a[@class='btn btn-primary btn-sm' and contains(@href, 'task_id={new_task_id}')]"
-            print_wait = WebDriverWait(driver, 300) # 5 minute timeout for button to be ready
+            print_wait = WebDriverWait(driver, 300)
             
             latest_button = print_wait.until(EC.presence_of_element_located((By.XPATH, print_button_xpath)))
             self._update_status(f"  > [成功] 按鈕已可用！準備點擊並擷取PDF。")
@@ -284,7 +302,7 @@ class AutomationTool:
                     driver.switch_to.window(window_handle)
                     break
             self._update_status("  > 已切換到列印分頁。")
-            time.sleep(5) # Allow print preview to render before capture
+            time.sleep(5)
 
             self._update_status("  > 步驟 6: 正在從瀏覽器直接生成 PDF 數據...")
             result = driver.execute_cdp_cmd("Page.printToPDF", {'printBackground': True})
@@ -299,7 +317,6 @@ class AutomationTool:
                     if page_text:
                         full_text += page_text + "\n"
             
-            # Use regex to find all barcodes following the specific label "物流條碼："
             extracted_barcodes = re.findall(r'物流條碼：\s*([A-Z0-9]{16})', full_text)
             unique_barcodes = sorted(list(set(extracted_barcodes)))
             
@@ -308,7 +325,7 @@ class AutomationTool:
                 
             self._update_status(f"  > [完成] 共提取到 {len(unique_barcodes)} 筆不重複的物流條碼。")
             
-            driver.close() # Close the print tab
+            driver.close()
             driver.switch_to.window(original_window)
             return unique_barcodes
 
@@ -320,12 +337,9 @@ class AutomationTool:
                     driver.save_screenshot(error_path)
                     self._update_status(f"  > [除錯] 錯誤畫面已儲存至 {error_path}")
             except: pass
-            return None # Return None on failure
+            return None
         finally:
             if driver: driver.quit()
-    # =========================================================================
-    # END: NEW NiceShoppy Automation Function
-    # =========================================================================
 
 
 # =================================================================================
@@ -377,6 +391,9 @@ def process_and_output_data(df, status_callback):
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     status_callback("✅ 資料處理完成！")
 
+# =================================================================================
+# 憑證管理
+# =================================================================================
 CREDENTIALS_FILE_WMS = "credentials_wms.json"
 CREDENTIALS_FILE_SHOPPY = "credentials_shoppy.json"
 def load_credentials(file_path):
@@ -385,16 +402,20 @@ def load_credentials(file_path):
             with open(file_path, 'r') as f: return json.load(f)
         except (json.JSONDecodeError, FileNotFoundError): return {}
     return {}
+
 def save_credentials(file_path, username, password):
     with open(file_path, 'w') as f: json.dump({"username": username, "password": password}, f)
+
 def clear_credentials(file_path):
     if os.path.exists(file_path): os.remove(file_path)
 
 # =================================================================================
-# Streamlit 前端介面 (已更新)
+# Streamlit 前端介面
 # =================================================================================
 
 st.set_page_config(page_title="WMS & Shoppy 工具", page_icon="🚚", layout="wide")
+
+# 初始化 session_state
 if 'wms_scraping_done' not in st.session_state: st.session_state.wms_scraping_done = False
 if 'seven_eleven_codes' not in st.session_state: st.session_state.seven_eleven_codes = []
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
@@ -404,7 +425,7 @@ if 'duck_index' not in st.session_state: st.session_state.duck_index = 0
 if 'shoppy_task_done' not in st.session_state: st.session_state.shoppy_task_done = False
 if 'extracted_barcodes' not in st.session_state: st.session_state.extracted_barcodes = []
 
-
+# --- 側邊欄 ---
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     with st.expander("⚙️ WMS 設定", expanded=True):
@@ -424,9 +445,11 @@ with st.sidebar:
 st.title("🚚 WMS & 蝦皮出貨快手 自動化工具")
 main_tab1, main_tab2 = st.tabs(["📊 WMS 資料擷取", "📦 蝦皮出貨快手"])
 
+# --- WMS 資料擷取分頁 ---
 with main_tab1:
     st.header("步驟一：從 WMS 擷取今日資料")
     if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width=True):
+        # 重設所有狀態
         if wms_remember: save_credentials(CREDENTIALS_FILE_WMS, wms_username, wms_password)
         else: clear_credentials(CREDENTIALS_FILE_WMS)
         st.session_state.wms_scraping_done = False
@@ -436,7 +459,6 @@ with main_tab1:
         progress_text = st.empty(); progress_duck = st.empty()
         st.session_state.duck_index = 0
         
-        # This part assumes you have local duck images. If not, it will just not show them.
         duck_images = ["duck_0.png", "duck_1.png", "duck_2.png", "duck_3.png", "duck_4.png"]
         
         def streamlit_callback(message):
@@ -447,7 +469,6 @@ with main_tab1:
             elif "資料處理完成" in message and st.session_state.duck_index < 4: st.session_state.duck_index = 4
             progress_text.info(f"{text}...")
             
-            # Check if image exists before trying to display it
             current_duck_image = duck_images[st.session_state.duck_index]
             if os.path.exists(current_duck_image):
                 progress_duck.image(current_duck_image)
@@ -468,7 +489,7 @@ with main_tab1:
                 elif result_df is not None and result_df.empty:
                     progress_text.empty(); progress_duck.empty()
                     st.warning("⚠️ WMS 抓取完成，但沒有收到任何資料。")
-                else: # result_df is None, indicates an error
+                else: 
                     progress_text.empty(); progress_duck.empty()
                     st.error("❌ 執行 WMS 任務時發生錯誤，請查看日誌。")
 
@@ -503,6 +524,7 @@ with main_tab1:
                                    file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
             st.text_area("報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed")
 
+# --- 蝦皮出貨快手分頁 ---
 with main_tab2:
     st.header("步驟二：處理蝦皮出貨快手訂單")
     if not st.session_state.get('wms_scraping_done', False):
@@ -529,7 +551,6 @@ with main_tab2:
                     st.error("❌ 請務必在側邊欄設定中輸入蝦皮出貨快手的帳號和密碼！")
                 else:
                     tool = AutomationTool(status_callback=shoppy_callback)
-                    # The function now returns a list of barcodes on success, or None on failure
                     result_barcodes = tool.run_niceshoppy_automation(shoppy_url, shoppy_username, shoppy_password, st.session_state.seven_eleven_codes)
                     
                     if result_barcodes is not None:
@@ -543,7 +564,6 @@ with main_tab2:
                 status_area_shoppy.error("❌ 執行蝦皮出貨快手任務時發生致命錯誤：")
                 st.exception(e)
 
-    # Display results area if the task was completed successfully
     if st.session_state.get('shoppy_task_done', False):
         st.markdown("---")
         st.subheader("✨ 擷取到的物流條碼結果")
