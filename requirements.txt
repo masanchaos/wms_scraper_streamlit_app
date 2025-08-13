@@ -1,4 +1,5 @@
 streamlit
-selenium
 pandas
+selenium
 webdriver-manager
+pdfplumber
