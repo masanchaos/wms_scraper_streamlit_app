@@ -1,5 +1,5 @@
 # =================================================================================
-# 完整程式碼 - 雲端穩定版 (Final Version)
+# 完整程式碼 - 極致偵錯版 (Final Debug Version)
 # =================================================================================
 import streamlit as st
 import pandas as pd
@@ -78,26 +78,44 @@ class AutomationTool:
         if self.status_callback:
             self.status_callback(message)
 
+    # --- 【極致偵錯版】 ---
     def _initialize_driver(self):
         """
-        [雲端穩定版] 初始化 WebDriver。
-        此版本不使用 webdriver-manager，而是直接使用由 packages.txt 安裝的系統級驅動程式。
+        [雲端極致偵錯版] 初始化 WebDriver。
+        增加大量日誌與輕量化參數，用於找出啟動失敗的確切位置。
         """
-        self._update_status("  > [穩定模式] 初始化 WebDriver...")
+        self._update_status("  > 1. 進入 _initialize_driver 函數")
         chrome_options = Options()
-
+        
         # --- 重要的雲端設定 ---
+        self._update_status("  > 2. 正在設定 Chrome 核心參數...")
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
-        # 直接指向由 packages.txt 安裝的 chromium-browser
+        
+        # --- 新增：針對低資源環境的最佳化參數 ---
+        self._update_status("  > 3. 正在設定低資源最佳化參數...")
+        chrome_options.add_argument("--disable-dev-shm-usage") # 非常重要！
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-infobars")
+        chrome_options.add_argument("--disable-popup-blocking")
+        chrome_options.add_argument("--disable-notifications")
+        chrome_options.add_argument("--disable-background-networking")
+        chrome_options.add_argument("--disable-sync")
+        chrome_options.add_argument("--disable-translate")
+        chrome_options.add_argument("--disable-default-apps")
+        chrome_options.add_argument("--disable-setuid-sandbox")
+        chrome_options.add_argument("--disable-logging")
+        chrome_options.add_argument("--single-process") # 嘗試用單一行程模式節省記憶體
+        
+        # --- 指向由 packages.txt 安裝的 chromium ---
+        self._update_status("  > 4. 正在設定瀏覽器執行檔路徑...")
         chrome_options.binary_location = "/usr/bin/chromium-browser"
+        
         # --- ---------------- ---
-
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-
+        
         settings = {
            "recentDestinations": [{"id": "Save as PDF", "origin": "local", "account": ""}],
            "selectedDestinationId": "Save as PDF",
@@ -110,19 +128,21 @@ class AutomationTool:
         chrome_options.add_experimental_option('prefs', prefs)
         chrome_options.add_argument('--kiosk-printing')
 
+        self._update_status("  > 5. 正在設定驅動程式服務 (Service)...")
         # 直接指向由 packages.txt 安裝的 chromedriver
         service = Service(executable_path="/usr/bin/chromedriver")
-
+        
+        self._update_status("  > 6. 準備執行 webdriver.Chrome(...)，這是最可能卡住的地方...")
         driver = webdriver.Chrome(service=service, options=chrome_options)
-
-        self._update_status("  > WebDriver 初始化完成。")
+        
+        self._update_status("  > 7. WebDriver 初始化成功！")
         return driver
 
-    # --- WMS Methods ---
+    # --- WMS Methods (保持不變) ---
     def _login_wms(self, driver, url, username, password):
         self._update_status("  > 正在前往 WMS 登入頁面...")
         driver.get(url)
-        wait = WebDriverWait(driver, 60) # 使用較長的等待時間
+        wait = WebDriverWait(driver, 60)
         account_xpath = "//input[@placeholder='example@jenjan.com.tw']"
         password_xpath = "//input[@type='password']"
         
@@ -150,6 +170,7 @@ class AutomationTool:
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
 
     def _scrape_data(self, driver):
+        # ... 此函數內容不變，為求簡潔此處省略，請使用您原本的即可 ...
         self._update_status("  > 點擊查詢按鈕以載入資料...")
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
         WebDriverWait(driver, 60).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
@@ -203,7 +224,9 @@ class AutomationTool:
         driver = None
         try:
             driver = self._initialize_driver()
+            self._update_status("  > WebDriver 物件已建立，設定頁面載入超時...")
             driver.set_page_load_timeout(60)
+            self._update_status("  > 準備登入 WMS...")
             self._login_wms(driver, url, username, password)
             self._navigate_to_picking_complete(driver)
             time.sleep(2)
@@ -229,6 +252,7 @@ class AutomationTool:
         driver = None
         try:
             driver = self._initialize_driver()
+            # ... 此函數內容不變，為求簡潔此處省略，請使用您原本的即可 ...
             self._login_niceshoppy(driver, url, username, password)
             wait = WebDriverWait(driver, 20)
             self._update_status("  > 準備進入「其他用戶」任務頁面...")
@@ -334,7 +358,7 @@ class AutomationTool:
                 driver.quit()
 
 # =================================================================================
-# 資料處理與報告生成
+# 資料處理與報告生成 (此區塊不變，為求簡潔此處省略)
 # =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
     if df_to_process.empty:
@@ -384,7 +408,7 @@ def process_and_output_data(df, status_callback):
     status_callback("✅ 資料處理完成！")
 
 # =================================================================================
-# 憑證管理
+# 憑證管理 (此區塊不變，為求簡潔此處省略)
 # =================================================================================
 CREDENTIALS_FILE_WMS = "credentials_wms.json"
 CREDENTIALS_FILE_SHOPPY = "credentials_shoppy.json"
@@ -406,7 +430,7 @@ def clear_credentials(file_path):
         os.remove(file_path)
 
 # =================================================================================
-# Streamlit 前端介面
+# Streamlit 前端介面 (此區塊不變，為求簡潔此處省略)
 # =================================================================================
 st.set_page_config(page_title="WMS & Shoppy 工具", page_icon="🚚", layout="wide")
 
