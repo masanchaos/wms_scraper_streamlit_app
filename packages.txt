@@ -1,7 +1,7 @@
-# 移除之前的所有內容，只保留下面這幾行
 chromium-browser
 chromium-chromedriver
 ffmpeg
 libsm6
 libxext6
 libgl1
+
