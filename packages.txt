@@ -1,7 +1,6 @@
-chromium-browser
-chromium-chromedriver
+chromium
+chromium-driver
 ffmpeg
 libsm6
 libxext6
 libgl1
-
