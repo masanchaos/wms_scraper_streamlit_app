@@ -1,9 +1,6 @@
 # 請用這個全新、更穩定的版本來替換掉您原本的 _initialize_driver 函數
     def _initialize_driver(self):
-        """
-        [雲端穩定版] 初始化 WebDriver。
-        此版本不使用 webdriver-manager，而是直接使用由 packages.txt 安裝的系統級驅動程式。
-        """
+    
         self._update_status("  > [穩定模式] 初始化 WebDriver...")
         chrome_options = Options()
         
@@ -38,3 +35,4 @@
         
         self._update_status("  > WebDriver 初始化完成。")
         return driver
+
