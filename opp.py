@@ -13,7 +13,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 # =================================================================================
 # 自訂複製按鈕
@@ -75,7 +75,7 @@ class AutomationTool:
         driver.set_window_size(1920, 1080)
         return driver
 
-    # --- WMS Methods (恢復正常) ---
+    # --- WMS Methods ---
     def _login_wms(self, driver, url, username, password):
         self._update_status("  > 正在前往 WMS 登入頁面...")
         driver.get(url)
@@ -113,56 +113,64 @@ class AutomationTool:
         while True:
             self._update_status(f"  > 正在抓取第 {page_count} 頁的資料...")
             current_page_rows = WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")))
-            if not current_page_rows: break
-            first_row_text_before_click = current_page_rows[0].text
+            
             for row in current_page_rows:
                 try:
                     shipping_method = row.find_element(By.XPATH, "./div[2]/div[3]").text.strip()
                     tracking_code_input = row.find_element(By.XPATH, "./div[2]/div[4]//input")
                     tracking_code = tracking_code_input.get_property('value').strip()
+
+                    # <<< CHANGE START: 新增狀態欄位以判斷訂單是否已取消 >>>
+                    status = '正常'
+                    try:
+                        # 使用 find_elements 避免在找不到元素時報錯
+                        canceled_div = row.find_elements(By.XPATH, ".//div[contains(@class, 'm-pre-dot') and contains(text(), '已取消')]")
+                        if canceled_div: # 如果列表不是空的，表示找到了 "已取消" 標籤
+                            status = '已取消'
+                    except Exception:
+                        pass # 即使檢查出錯，也當作正常訂單處理
+                    # <<< CHANGE END >>>
+                    
                     if shipping_method or tracking_code:
-                        all_data.append({"寄送方式": shipping_method, "主要運送代碼": tracking_code})
-                except Exception: continue
+                        all_data.append({
+                            "寄送方式": shipping_method,
+                            "主要運送代碼": tracking_code,
+                            "狀態": status # 將狀態加入資料中
+                        })
+                except Exception:
+                    continue # 如果某一行有問題，跳過並繼續處理下一行
+            
             try:
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button = driver.find_element(By.XPATH, next_button_xpath)
-                if next_button.get_attribute('disabled'): break
+                if next_button.get_attribute('disabled'):
+                    self._update_status("  > 「下一頁」按鈕已禁用，抓取結束。")
+                    break
+                
+                list_container = driver.find_element(By.XPATH, item_list_container_xpath)
+                
                 driver.execute_script("arguments[0].click();", next_button)
                 page_count += 1
-                timeout = 20; start_time = time.time()
-                while True:
-                    if time.time() - start_time > timeout: raise TimeoutException(f"頁面內容在{timeout}秒內未刷新。")
-                    WebDriverWait(driver, timeout).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
-                    new_first_row = driver.find_element(By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')][1]")
-                    if new_first_row.text != first_row_text_before_click:
-                        self._update_status(f"  > 第 {page_count} 頁內容已成功刷新。")
-                        break
-                    time.sleep(0.5)
-            except Exception as e:
-                self._update_status(f"  > 未找到下一頁按鈕或翻頁失敗 ({e})，抓取結束。")
+                
+                self._update_status(f"  > 等待第 {page_count} 頁刷新...")
+                WebDriverWait(driver, 20).until(EC.staleness_of(list_container))
+                WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")))
+                self._update_status(f"  > 第 {page_count} 頁內容已成功刷新。")
+                
+            except NoSuchElementException:
+                self._update_status("  > 未找到「下一頁」按鈕，抓取結束。")
                 break
+            except TimeoutException:
+                self._update_status(f"  > 等待第 {page_count} 頁刷新超時，抓取結束。")
+                break
+            except Exception as e:
+                self._update_status(f"  > 翻頁時發生未知錯誤 ({e})，抓取結束。")
+                break
+                
         self._update_status("  > 所有頁面資料抓取完畢。")
         return all_data
 
-    # --- NiceShoppy Methods ---
-    def _login_niceshoppy(self, driver, url, username, password):
-        self._update_status("  > 正在前往蝦皮出貨快手頁面...")
-        driver.get(url)
-        try:
-            login_link_xpath = "//a[normalize-space()='登入']"
-            login_link = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, login_link_xpath)))
-            self._update_status("  > 偵測到尚未登入，點擊「登入」連結...")
-            login_link.click()
-        except TimeoutException:
-            self._update_status("  > 未找到「登入」連結，假設已在登入頁面。")
-        self._update_status("  > 正在輸入帳號密碼...")
-        WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.NAME, "username"))).send_keys(username)
-        driver.find_element(By.NAME, "password").send_keys(password)
-        driver.find_element(By.XPATH, "//button[@type='submit']").click()
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, "//h1[contains(text(), '建立超商寄件單')]")))
-        self._update_status("✅ [成功] 蝦皮出貨快手登入成功！")
-
-    # --- Main Execution Flows ---
+    # --- Main Execution Flow ---
     def run_wms_scrape(self, url, username, password):
         driver = None
         try:
@@ -174,114 +182,24 @@ class AutomationTool:
             return pd.DataFrame(data)
         except Exception as e:
             self._update_status(f"❌ WMS 抓取過程中發生錯誤: {e}")
-            # 確保即使出錯也返回 None，而不是讓異常中斷程式
             return None
         finally:
             if driver: driver.quit()
-
-    # =========================================================================
-    # START: REVISED and DEBUG-ENHANCED NiceShoppy Automation Function
-    # =========================================================================
-    def run_niceshoppy_automation(self, url, username, password, codes_to_process):
-        driver = None
-        try:
-            driver = self._initialize_driver()
-            self._login_niceshoppy(driver, url, username, password)
-            self._update_status("  > 登入成功，準備點擊「其他用戶」標籤...")
-            time.sleep(3) 
-
-            wait = WebDriverWait(driver, 20)
-
-            # --- 診斷步驟 1: 檢查是否存在 Iframe ---
-            iframes = driver.find_elements(By.TAG_NAME, 'iframe')
-            self._update_status(f"  > [除錯資訊] 頁面中共找到 {len(iframes)} 個 iframe。")
-            if len(iframes) > 0:
-                self._update_status("  > [除錯資訊] 警告：頁面中存在 iframe，這可能是點擊失敗的原因。")
-
-            # --- 診斷步驟 2: 使用更精確的 XPath 並檢查元素狀態 ---
-            other_user_tab_xpath = "//div[@class='my-tab']//a[normalize-space()='其他用戶']"
-            self._update_status("  > [除錯資訊] 使用更精確的 XPath 尋找元素...")
-
-            try:
-                other_user_tab = wait.until(EC.presence_of_element_located((By.XPATH, other_user_tab_xpath)))
-                self._update_status("  > [除錯資訊] 成功找到元素！")
-                
-                is_displayed = other_user_tab.is_displayed()
-                is_enabled = other_user_tab.is_enabled()
-                self._update_status(f"  > [除錯資訊] 元素是否可見 (is_displayed): {is_displayed}")
-                self._update_status(f"  > [除錯資訊] 元素是否啟用 (is_enabled): {is_enabled}")
-
-                if not is_displayed:
-                    self._update_status("  > [除錯資訊] 錯誤：元素找到了，但是處於不可見狀態！")
-                    raise Exception("目標元素不可見")
-
-                # --- 診斷步驟 3: 執行點擊 ---
-                self._update_status("  > 執行 JavaScript 點擊...")
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'}); arguments[0].click();", other_user_tab)
-                self._update_status("  > JS 點擊指令已發送。等待2秒讓頁面反應...")
-                time.sleep(2) 
-
-                # --- 診斷步驟 4: 驗證點擊結果 ---
-                class_attribute = other_user_tab.get_attribute('class')
-                self._update_status(f"  > [除錯資訊] 點擊後，元素的 class 為: '{class_attribute}'")
-
-                if 'active' in class_attribute:
-                    self._update_status("  > ✅ [驗證成功] 「其他用戶」頁籤已成功切換！")
-                else:
-                    self._update_status("  > ❌ [驗證失敗] 點擊未生效！嘗試直接呼叫 JS 函式 (備用方案)...")
-                    # 備用方案：直接呼叫 onclick 的函式，將 event 替換為 null
-                    driver.execute_script("openTab(null, 'other_tab')")
-                    time.sleep(2)
-                    class_attribute_after_fallback = other_user_tab.get_attribute('class')
-                    self._update_status(f"  > [除錯資訊] 備用方案後，元素的 class 為: '{class_attribute_after_fallback}'")
-                    if 'active' not in class_attribute_after_fallback:
-                         raise Exception("所有點擊方法均失敗")
-
-            except Exception as e:
-                self._update_status(f"  > ❗️ 在點擊「其他用戶」時發生關鍵錯誤: {e}")
-                driver.save_screenshot('niceshoppy_debug_error.png')
-                # 僅儲存截圖，不呼叫 st.image
-                raise 
-
-            self._update_status("  > 正在尋找 7-11 輸入框...")
-            seven_eleven_textarea_xpath = "//textarea[@name='unimart']"
-            seven_eleven_textarea = wait.until(EC.element_to_be_clickable((By.XPATH, seven_eleven_textarea_xpath)))
-            
-            self._update_status(f"  > 找到輸入框，準備貼上 {len(codes_to_process)} 筆代碼...")
-            codes_as_string = "\n".join(codes_to_process)
-            driver.execute_script("arguments[0].value = arguments[1];", seven_eleven_textarea, codes_as_string)
-            self._update_status("  > ✅ 代碼已全部貼上！")
-            
-            time.sleep(1)
-            driver.find_element(By.XPATH, "//button[contains(text(), '產出寄件單')]").click()
-            self._update_status("🎉 [完成] 已點擊產出寄件單！")
-            time.sleep(5)
-            return True
-        except Exception as e:
-            self._update_status(f"  > ❗️ 蝦皮出貨快手處理過程中發生錯誤: {e}")
-            try:
-                if driver:
-                    driver.save_screenshot('niceshoppy_fatal_error.png')
-                    # 僅儲存截圖，不呼叫 st.image
-            except: pass
-            return False
-        finally:
-            if driver: driver.quit()
-    # =========================================================================
-    # END: REVISED NiceShoppy Automation Function
-    # =========================================================================
-
 
 # =================================================================================
 # 資料處理與報告生成
 # =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
-    if df_to_process.empty:
-        summary = f"--- {report_title} ---\n\n指定條件下無資料。"
+    # <<< CHANGE: 移除 "狀態" 欄位，避免顯示在報告中 >>>
+    df_display = df_to_process.drop(columns=['狀態'], errors='ignore')
+
+    if df_display.empty:
+        summary = f"--- {report_title} ---\n\n此分類下無資料。"
         full_report = f"擷取時間: {display_timestamp} (台北時間)\n\n{summary}"
         return summary, full_report
-    summary_df = df_to_process.groupby('寄送方式', observed=False).size().reset_index(name='數量')
-    total_count = len(df_to_process)
+    
+    summary_df = df_display.groupby('寄送方式', observed=False).size().reset_index(name='數量')
+    total_count = len(df_display)
     max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
     summary_lines = ["==============================", f"=== {report_title} ===", "=============================="]
     for _, row in summary_df.iterrows():
@@ -292,37 +210,52 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
     summary_lines.append("------------------------------")
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
-    details_text = df_to_process.to_string(index=False)
+    details_text = df_display.to_string(index=False)
     full_report_text = (f"擷取時間: {display_timestamp} (台北時間)\n\n{summary_text}\n\n"
-                      "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
-                      f"{details_text}")
+                        "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
+                        f"{details_text}")
     return summary_text, full_report_text
 
 def process_and_output_data(df, status_callback):
-    status_callback("  > 細分組...")
-    df['主要運送代碼'] = df['主要運送代碼'].astype(str)
-    condition = (df['寄送方式'] == '7-11') & (df['主要運送代碼'].str.match(r'^\d', na=False))
-    df.loc[condition, '寄送方式'] = '711大物流'
     now = datetime.datetime.now(ZoneInfo("Asia/Taipei"))
     display_timestamp = now.strftime("%Y-%m-%d %H:%M")
+
+    # <<< CHANGE START: 根據 "狀態" 欄位將 DataFrame 拆分 >>>
+    status_callback("  > 拆分已取消與正常訂單...")
+    df_canceled = df[df['狀態'] == '已取消'].copy()
+    df_processing = df[df['狀態'] != '已取消'].copy()
+    # <<< CHANGE END >>>
+
+    # --- 後續的所有處理，都只針對 df_processing ---
+    status_callback("  > 細分組...")
+    df_processing['主要運送代碼'] = df_processing['主要運送代碼'].astype(str)
+    condition = (df_processing['寄送方式'] == '7-11') & (df_processing['主要運送代碼'].str.match(r'^\d', na=False))
+    df_processing.loc[condition, '寄送方式'] = '711大物流'
+    
     priority_order = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
-    all_methods = df['寄送方式'].unique().tolist()
+    all_methods = df_processing['寄送方式'].unique().tolist()
     final_order = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
-    df['寄送方式'] = pd.Categorical(df['寄送方式'], categories=final_order, ordered=True)
-    df_sorted_all = df.sort_values(by='寄送方式')
+    df_processing['寄送方式'] = pd.Categorical(df_processing['寄送方式'], categories=final_order, ordered=True)
+    
+    df_sorted_all = df_processing.sort_values(by='寄送方式')
     default_methods = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
     df_filtered = df_sorted_all[df_sorted_all['寄送方式'].isin(default_methods)]
+    
+    # --- 將處理好的資料存入 session_state ---
     st.session_state.df_filtered = df_filtered
     st.session_state.final_df = df_sorted_all
-    seven_codes = df_sorted_all[df_sorted_all['寄送方式'] == '7-11']['主要運送代碼'].tolist()
-    st.session_state.seven_eleven_codes = [code for code in seven_codes if code]
-    st.session_state.report_texts['filtered_summary'], st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")
-    st.session_state.report_texts['all_summary'], st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")
+    st.session_state.df_canceled = df_canceled # 儲存已取消的 DataFrame
+
+    # --- 產生三份報告 ---
+    st.session_state.report_texts = {}
+    st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")[1]
+    st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")[1]
+    st.session_state.report_texts['canceled_full'] = generate_report_text(df_canceled, display_timestamp, "已取消項目統計")[1]
+    
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     status_callback("✅ 資料處理完成！")
 
 CREDENTIALS_FILE_WMS = "credentials_wms.json"
-CREDENTIALS_FILE_SHOPPY = "credentials_shoppy.json"
 def load_credentials(file_path):
     if os.path.exists(file_path):
         try:
@@ -338,13 +271,15 @@ def clear_credentials(file_path):
 # Streamlit 前端介面
 # =================================================================================
 
-st.set_page_config(page_title="WMS & Shoppy 工具", page_icon="🚚", layout="wide")
+st.set_page_config(page_title="WMS 工具", page_icon="🚚", layout="wide")
+# --- 初始化 session_state ---
 if 'wms_scraping_done' not in st.session_state: st.session_state.wms_scraping_done = False
-if 'seven_eleven_codes' not in st.session_state: st.session_state.seven_eleven_codes = []
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'df_filtered' not in st.session_state: st.session_state.df_filtered = pd.DataFrame()
+if 'df_canceled' not in st.session_state: st.session_state.df_canceled = pd.DataFrame() # <<< 新增
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
 if 'duck_index' not in st.session_state: st.session_state.duck_index = 0
+
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
     with st.expander("⚙️ WMS 設定", expanded=True):
@@ -353,123 +288,102 @@ with st.sidebar:
         wms_username = st.text_input("WMS 帳號", value=wms_creds.get("username", ""), key="wms_user")
         wms_password = st.text_input("WMS 密碼", value=wms_creds.get("password", ""), type="password", key="wms_pass")
         wms_remember = st.checkbox("記住 WMS 帳密", value=bool(wms_creds), key="wms_rem")
-    with st.expander("⚙️ 蝦皮出貨快手設定", expanded=True):
-        shoppy_creds = load_credentials(CREDENTIALS_FILE_SHOPPY)
-        shoppy_url = st.text_input("快手 URL", value="https://niceshoppy.cc/task/", key="shoppy_url")
-        shoppy_username = st.text_input("快手 帳號", value=shoppy_creds.get("username", "service.jenjan@gmail.com"), key="shoppy_user")
-        shoppy_password = st.text_input("快手 密碼", value=shoppy_creds.get("password", "jenjan24488261"), type="password", key="shoppy_pass")
-        shoppy_remember = st.checkbox("記住 快手 帳密", value=bool(shoppy_creds), key="shoppy_rem")
     st.warning("⚠️ **安全性提醒**:\n勾選「記住」會將帳密以可讀取的形式保存在伺服器上。")
 
-st.title("🚚 WMS & 蝦皮出貨快手 自動化工具")
-main_tab1, main_tab2 = st.tabs(["📊 WMS 資料擷取", "📦 蝦皮出貨快手"])
+st.title("🚚 WMS 自動化資料擷取工具")
+st.header("從 WMS 擷取今日資料")
 
-with main_tab1:
-    st.header("步驟一：從 WMS 擷取今日資料")
-    if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width=True):
-        if wms_remember: save_credentials(CREDENTIALS_FILE_WMS, wms_username, wms_password)
-        else: clear_credentials(CREDENTIALS_FILE_WMS)
-        st.session_state.wms_scraping_done = False
-        st.session_state.seven_eleven_codes = []
-        progress_text = st.empty(); progress_duck = st.empty()
-        st.session_state.duck_index = 0
+if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width=True):
+    if wms_remember: save_credentials(CREDENTIALS_FILE_WMS, wms_username, wms_password)
+    else: clear_credentials(CREDENTIALS_FILE_WMS)
+    
+    st.session_state.wms_scraping_done = False
+    progress_text = st.empty(); progress_duck = st.empty()
+    st.session_state.duck_index = 0
+    
+    duck_images = ["duck_0.png", "duck_1.png", "duck_2.png", "duck_3.png", "duck_4.png"]
+    
+    def streamlit_callback(message):
+        text = message.replace("  > ", "").replace("...", "")
+        if "登入完成" in message and st.session_state.duck_index < 1: st.session_state.duck_index = 1
+        elif "進入揀包完成頁面" in message and st.session_state.duck_index < 2: st.session_state.duck_index = 2
+        elif "所有頁面資料抓取完畢" in message and st.session_state.duck_index < 3: st.session_state.duck_index = 3
+        elif "資料處理完成" in message and st.session_state.duck_index < 4: st.session_state.duck_index = 4
+        progress_text.info(f"{text}...")
         
-        # 假設你有這些圖片檔在本地
-        duck_images = ["duck_0.png", "duck_1.png", "duck_2.png", "duck_3.png", "duck_4.png"]
-        
-        def streamlit_callback(message):
-            text = message.replace("  > ", "").replace("...", "")
-            if "登入完成" in message and st.session_state.duck_index < 1: st.session_state.duck_index = 1
-            elif "進入揀包完成頁面" in message and st.session_state.duck_index < 2: st.session_state.duck_index = 2
-            elif "所有頁面資料抓取完畢" in message and st.session_state.duck_index < 3: st.session_state.duck_index = 3
-            elif "資料處理完成" in message and st.session_state.duck_index < 4: st.session_state.duck_index = 4
-            progress_text.info(f"{text}...") # 使用 .info 讓訊息更清晰
+        if os.path.exists(duck_images[st.session_state.duck_index]):
+            progress_duck.image(duck_images[st.session_state.duck_index])
+
+    try:
+        if not wms_username or not wms_password:
+            st.error("❌ 請務必輸入 WMS 帳號和密碼！")
+        else:
+            streamlit_callback("準備開始... 🐣")
+            tool = AutomationTool(status_callback=streamlit_callback)
+            result_df = tool.run_wms_scrape(wms_url, wms_username, wms_password)
             
-            if os.path.exists(duck_images[st.session_state.duck_index]):
-                progress_duck.image(duck_images[st.session_state.duck_index])
+            if result_df is not None and not result_df.empty:
+                process_and_output_data(result_df, streamlit_callback)
+                st.session_state.wms_scraping_done = True
+                time.sleep(1); progress_text.empty(); progress_duck.empty()
+                st.success("🎉 WMS 任務完成！")
+            elif result_df is not None and result_df.empty:
+                progress_text.empty(); progress_duck.empty()
+                st.warning("⚠️ WMS 抓取完成，但沒有收到任何資料。")
+            else: 
+                progress_text.empty(); progress_duck.empty()
+                st.error("❌ 執行 WMS 任務時發生錯誤，請查看日誌。")
 
-        try:
-            if not wms_username or not wms_password:
-                st.error("❌ 請務必輸入 WMS 帳號和密碼！")
-            else:
-                streamlit_callback("準備開始... 🐣")
-                tool = AutomationTool(status_callback=streamlit_callback)
-                result_df = tool.run_wms_scrape(wms_url, wms_username, wms_password)
-                
-                if result_df is not None and not result_df.empty:
-                    process_and_output_data(result_df, streamlit_callback)
-                    st.session_state.wms_scraping_done = True
-                    time.sleep(1); progress_text.empty(); progress_duck.empty()
-                    st.success("🎉 WMS 任務完成！")
-                elif result_df is not None and result_df.empty:
-                    progress_text.empty(); progress_duck.empty()
-                    st.warning("⚠️ WMS 抓取完成，但沒有收到任何資料。")
-                else: # result_df is None, 表示過程出錯
-                    progress_text.empty(); progress_duck.empty()
-                    st.error("❌ 執行 WMS 任務時發生錯誤，請查看日誌。")
+    except Exception as e:
+        progress_text.empty(); progress_duck.empty()
+        st.error(f"❌ 執行 WMS 任務時發生致命錯誤："); st.exception(e)
 
-        except Exception as e:
-            progress_text.empty(); progress_duck.empty()
-            st.error(f"❌ 執行 WMS 任務時發生致命錯誤："); st.exception(e)
+if st.session_state.get('wms_scraping_done', False):
+    st.markdown("---")
+    st.header("📊 WMS 擷取結果")
+    
+    # <<< CHANGE: 從 2 個分頁增加到 3 個 >>>
+    restab1, restab2, restab3 = st.tabs(["📊 指定項目報告", "📋 所有項目報告", "❌ 已取消訂單"])
+    
+    with restab1:
+        st.subheader("指定項目統計與明細")
+        col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
+        with col1: create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "一鍵複製報告", key="copy-btn-filtered")
+        with col2:
+            st.download_button(label="下載 CSV (指定項目)", data=st.session_state.df_filtered.to_csv(index=False, encoding='utf-8-sig'),
+                               file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
+        with col3:
+            st.download_button(label="下載 TXT (指定項目)", data=st.session_state.report_texts.get('filtered_full', '').encode('utf-8'),
+                               file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
+        st.text_area("報告內容", value=st.session_state.report_texts.get('filtered_full', '無資料'), height=500, label_visibility="collapsed", key="text-filtered")
+        
+    with restab2:
+        st.subheader("所有項目統計與明細")
+        col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
+        with col1: create_copy_button(st.session_state.report_texts.get('all_full', ''), "一鍵複製報告", key="copy-btn-all")
+        with col2:
+            st.download_button(label="下載 CSV (所有資料)", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
+                               file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
+        with col3:
+            st.download_button(label="下載 TXT (所有資料)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
+                               file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
+        st.text_area("報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed", key="text-all")
 
-    if st.session_state.get('wms_scraping_done', False):
-        st.markdown("---")
-        st.header("📊 WMS 擷取結果")
-        restab1, restab2 = st.tabs(["📊 指定項目報告", "📋 所有項目報告"])
-        with restab1:
-            st.subheader("指定項目統計與明細")
+    # <<< CHANGE START: 新增已取消訂單的分頁內容 >>>
+    with restab3:
+        st.subheader("已取消訂單統計與明細")
+        if not st.session_state.df_canceled.empty:
             col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
-            with col1: create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "一鍵複製報告", key="copy-btn-filtered")
+            with col1: create_copy_button(st.session_state.report_texts.get('canceled_full', ''), "一鍵複製報告", key="copy-btn-canceled")
             with col2:
-                st.download_button(label="下載 CSV (指定項目)", data=st.session_state.df_filtered.to_csv(index=False, encoding='utf-8-sig'),
-                                   file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
+                # 移除 "狀態" 欄位再下載
+                csv_data_canceled = st.session_state.df_canceled.drop(columns=['狀態'], errors='ignore').to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(label="下載 CSV (已取消)", data=csv_data_canceled,
+                                   file_name=f"picking_data_CANCELED_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
             with col3:
-                st.download_button(label="下載 TXT (指定項目)", data=st.session_state.report_texts.get('filtered_full', '').encode('utf-8'),
-                                   file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
-            st.text_area("報告內容", value=st.session_state.report_texts.get('filtered_full', '無資料'), height=500, label_visibility="collapsed")
-        with restab2:
-            st.subheader("所有項目統計與明細")
-            col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
-            with col1: create_copy_button(st.session_state.report_texts.get('all_full', ''), "一鍵複製報告", key="copy-btn-all")
-            with col2:
-                st.download_button(label="下載 CSV (所有資料)", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
-                                   file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
-            with col3:
-                st.download_button(label="下載 TXT (所有資料)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
-                                   file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
-            st.text_area("報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed")
-
-with main_tab2:
-    st.header("步驟二：處理蝦皮出貨快手訂單")
-    if not st.session_state.get('wms_scraping_done', False):
-         st.info("請先在「WMS 資料擷取」分頁中成功擷取資料，才能啟用此功能。")
-    elif not st.session_state.get('seven_eleven_codes'):
-        st.warning("WMS 資料中未找到需要處理的【純 7-11】運送代碼。")
-    else:
-        st.success(f"✅ 已從 WMS 系統載入 **{len(st.session_state.seven_eleven_codes)}** 筆 **純 7-11** 的運送代碼。")
-        st.text_area("待處理代碼預覽", value="\n".join(st.session_state.seven_eleven_codes), height=150)
-        
-        if st.button("🚀 開始處理蝦皮出貨快手", type="primary", use_container_width=True, disabled=not st.session_state.get('seven_eleven_codes')):
-            if shoppy_remember: save_credentials(CREDENTIALS_FILE_SHOPPY, shoppy_username, shoppy_password)
-            else: clear_credentials(CREDENTIALS_FILE_SHOPPY)
-            
-            status_area_shoppy = st.empty()
-            
-            def shoppy_callback(message): 
-                status_area_shoppy.info(message)
-            
-            try:
-                if not shoppy_username or not shoppy_password:
-                    st.error("❌ 請務必在側邊欄設定中輸入蝦皮出貨快手的帳號和密碼！")
-                else:
-                    tool = AutomationTool(status_callback=shoppy_callback)
-                    success = tool.run_niceshoppy_automation(shoppy_url, shoppy_username, shoppy_password, st.session_state.seven_eleven_codes)
-                    
-                    if success:
-                        status_area_shoppy.success("🎉 蝦皮出貨快手任務已成功執行！")
-                    else:
-                        status_area_shoppy.error("❌ 蝦皮出貨快手任務失敗，請查看上方日誌。若有截圖產生，請在程式所在的資料夾內查看。")
-            except Exception as e:
-                status_area_shoppy.error("❌ 執行蝦皮出貨快手任務時發生致命錯誤：")
-                st.exception(e)
-
+                st.download_button(label="下載 TXT (已取消)", data=st.session_state.report_texts.get('canceled_full', '').encode('utf-8'),
+                                   file_name=f"picking_data_CANCELED_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
+            st.text_area("報告內容", value=st.session_state.report_texts.get('canceled_full', '無資料'), height=500, label_visibility="collapsed", key="text-canceled")
+        else:
+            st.info("沒有已取消的訂單。")
+    # <<< CHANGE END >>>
