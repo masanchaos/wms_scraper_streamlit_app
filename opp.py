@@ -100,72 +100,93 @@ class AutomationTool:
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Complete'))]"
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
+
     def _scrape_data(self, driver):
-        self._update_status("  > 點擊查詢按鈕以載入資料...")
+        self._update_status("  > 點擊查詢按鈕以載入資料...")
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
+        
         loading_spinner_xpath = "//div[contains(@class, 'j-loading')]"
         WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
-        self._update_status("  > 資料已初步載入。")
+        self._update_status("  > 資料已初步載入。")
+        
         all_data = []
         page_count = 1
         item_list_container_xpath = "//div[contains(@class, 'list-items')]"
+
         while True:
-            self._update_status(f"  > 正在抓取第 {page_count} 頁的資料...")
-            current_page_rows = WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")))
-            
+            self._update_status(f"  > 正在抓取第 {page_count} 頁的資料...")
+            try:
+                # 等待當前頁面的項目載入完成
+                current_page_rows = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]"))
+                )
+            except TimeoutException:
+                self._update_status(f"  > 第 {page_count} 頁等待項目載入超時，可能已無資料。")
+                break
+
             for row in current_page_rows:
                 try:
                     shipping_method = row.find_element(By.XPATH, "./div[2]/div[3]").text.strip()
                     tracking_code_input = row.find_element(By.XPATH, "./div[2]/div[4]//input")
                     tracking_code = tracking_code_input.get_property('value').strip()
-
-                    # <<< CHANGE START: 新增狀態欄位以判斷訂單是否已取消 >>>
+                    
                     status = '正常'
                     try:
-                        # 使用 find_elements 避免在找不到元素時報錯
                         canceled_div = row.find_elements(By.XPATH, ".//div[contains(@class, 'm-pre-dot') and contains(text(), '已取消')]")
-                        if canceled_div: # 如果列表不是空的，表示找到了 "已取消" 標籤
+                        if canceled_div:
                             status = '已取消'
                     except Exception:
-                        pass # 即使檢查出錯，也當作正常訂單處理
-                    # <<< CHANGE END >>>
+                        pass
                     
                     if shipping_method or tracking_code:
                         all_data.append({
                             "寄送方式": shipping_method,
                             "主要運送代碼": tracking_code,
-                            "狀態": status # 將狀態加入資料中
+                            "狀態": status
                         })
                 except Exception:
                     continue # 如果某一行有問題，跳過並繼續處理下一行
             
+            # <<< 修改開始：重構翻頁判斷與等待邏輯 >>>
             try:
+                # 1. 尋找「下一頁」按鈕
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
-                next_button = driver.find_element(By.XPATH, next_button_xpath)
+                next_button = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, next_button_xpath))
+                )
+                
+                # 2. 檢查按鈕是否被禁用，如果是則結束迴圈
                 if next_button.get_attribute('disabled'):
-                    self._update_status("  > 「下一頁」按鈕已禁用，抓取結束。")
+                    self._update_status("  > 「下一頁」按鈕已禁用，抓取結束。")
                     break
                 
-                list_container = driver.find_element(By.XPATH, item_list_container_xpath)
+                # 3. 點擊按鈕並準備等待
+                self._update_status(f"  > 前往第 {page_count + 1} 頁...")
+                # 使用 JS 點擊更穩定，並先捲動到視野中
+                driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
+                time.sleep(0.5) # 給予捲動一點緩衝時間
+                next_button.click()
                 
-                driver.execute_script("arguments[0].click();", next_button)
+                # 4. 【核心】等待載入動畫出現，再等待它消失
+                # 這是最可靠的等待方式，確保新資料已載入
+                WebDriverWait(driver, 10).until(
+                    EC.visibility_of_element_located((By.XPATH, loading_spinner_xpath))
+                )
+                WebDriverWait(driver, 20).until(
+                    EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath))
+                )
+                
+                self._update_status(f"  > 第 {page_count + 1} 頁內容已成功載入。")
                 page_count += 1
-                
-                self._update_status(f"  > 等待第 {page_count} 頁刷新...")
-                WebDriverWait(driver, 20).until(EC.staleness_of(list_container))
-                WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")))
-                self._update_status(f"  > 第 {page_count} 頁內容已成功刷新。")
-                
-            except NoSuchElementException:
-                self._update_status("  > 未找到「下一頁」按鈕，抓取結束。")
-                break
+
             except TimeoutException:
-                self._update_status(f"  > 等待第 {page_count} 頁刷新超時，抓取結束。")
+                self._update_status("  > 未找到可點擊的「下一頁」按鈕或等待新頁面超時，抓取結束。")
                 break
             except Exception as e:
-                self._update_status(f"  > 翻頁時發生未知錯誤 ({e})，抓取結束。")
+                self._update_status(f"  > 翻頁時發生未知錯誤 ({e})，抓取結束。")
                 break
+            # <<< 修改結束 >>>
                 
         self._update_status("  > 所有頁面資料抓取完畢。")
         return all_data
@@ -387,3 +408,4 @@ if st.session_state.get('wms_scraping_done', False):
         else:
             st.info("沒有已取消的訂單。")
     # <<< CHANGE END >>>
+
