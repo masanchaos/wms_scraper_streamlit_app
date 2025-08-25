@@ -227,8 +227,11 @@ class AutomationTool:
 # =================================================================================
 # 資料處理與報告生成
 # =================================================================================
+# =================================================================================
+# 資料處理與報告生成 (邏輯修正版)
+# =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
-    # <<< CHANGE: 移除 "狀態" 欄位，避免顯示在報告中 >>>
+    # 維持原樣，但在處理前移除 "狀態" 欄位，避免顯示
     df_display = df_to_process.drop(columns=['狀態'], errors='ignore')
 
     if df_display.empty:
@@ -250,39 +253,48 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
     summary_text = "\n".join(summary_lines)
     details_text = df_display.to_string(index=False)
     full_report_text = (f"擷取時間: {display_timestamp} (台北時間)\n\n{summary_text}\n\n"
-                        "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
-                        f"{details_text}")
+                      "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
+                      f"{details_text}")
     return summary_text, full_report_text
 
 def process_and_output_data(df, status_callback):
     now = datetime.datetime.now(ZoneInfo("Asia/Taipei"))
     display_timestamp = now.strftime("%Y-%m-%d %H:%M")
 
-    # <<< CHANGE START: 根據 "狀態" 欄位將 DataFrame 拆分 >>>
-    status_callback("  > 拆分已取消與正常訂單...")
+    status_callback("  > 拆分已取消與正常訂單...")
     df_canceled = df[df['狀態'] == '已取消'].copy()
     df_processing = df[df['狀態'] != '已取消'].copy()
-    # <<< CHANGE END >>>
-
-    # --- 後續的所有處理，都只針對 df_processing ---
-    status_callback("  > 細分組...")
+    
+    # --- 優先處理「指定項目」和「711大物流」分類 ---
+    # 這部分邏輯只針對 df_processing (正常訂單)
+    status_callback("  > 細分正常訂單組...")
     df_processing['主要運送代碼'] = df_processing['主要運送代碼'].astype(str)
     condition = (df_processing['寄送方式'] == '7-11') & (df_processing['主要運送代碼'].str.match(r'^\d', na=False))
     df_processing.loc[condition, '寄送方式'] = '711大物流'
     
     priority_order = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
-    all_methods = df_processing['寄送方式'].unique().tolist()
-    final_order = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
-    df_processing['寄送方式'] = pd.Categorical(df_processing['寄送方式'], categories=final_order, ordered=True)
+    processing_methods = df_processing['寄送方式'].unique().tolist()
+    processing_order = [m for m in priority_order if m in processing_methods] + sorted([m for m in processing_methods if m not in priority_order])
+    df_processing['寄送方式'] = pd.Categorical(df_processing['寄送方式'], categories=processing_order, ordered=True)
     
-    df_sorted_all = df_processing.sort_values(by='寄送方式')
+    df_processing_sorted = df_processing.sort_values(by='寄送方式')
+    
     default_methods = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
-    df_filtered = df_sorted_all[df_sorted_all['寄送方式'].isin(default_methods)]
+    df_filtered = df_processing_sorted[df_processing_sorted['寄送方式'].isin(default_methods)]
     
+    # --- 處理「所有項目報告」 ---
+    # <<< 核心修改：df_sorted_all 現在基於最原始的 df (包含正常+取消) >>>
+    status_callback("  > 準備完整的總報告...")
+    all_methods = df['寄送方式'].unique().tolist()
+    # 我們可以沿用相同的優先級排序邏輯，讓報告整體風格一致
+    final_order_all = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
+    df['寄送方式'] = pd.Categorical(df['寄送方式'], categories=final_order_all, ordered=True)
+    df_sorted_all = df.sort_values(by='寄送方式')
+
     # --- 將處理好的資料存入 session_state ---
-    st.session_state.df_filtered = df_filtered
-    st.session_state.final_df = df_sorted_all
-    st.session_state.df_canceled = df_canceled # 儲存已取消的 DataFrame
+    st.session_state.df_filtered = df_filtered       # 指定項目 (從正常訂單篩選)
+    st.session_state.final_df = df_sorted_all       # 所有項目 (原始完整資料)
+    st.session_state.df_canceled = df_canceled      # 已取消項目 (從原始資料篩選)
 
     # --- 產生三份報告 ---
     st.session_state.report_texts = {}
@@ -425,6 +437,7 @@ if st.session_state.get('wms_scraping_done', False):
         else:
             st.info("沒有已取消的訂單。")
     # <<< CHANGE END >>>
+
 
 
 
