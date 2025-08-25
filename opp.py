@@ -111,6 +111,11 @@ class AutomationTool:
 # ... (AutomationTool class 和其他方法保持不變) ...
 # =================================================================================
 
+    # =================================================================================
+# 核心爬蟲邏輯 (已修正架構)
+# ... (AutomationTool class 和其他方法保持不變) ...
+# =================================================================================
+
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
@@ -120,7 +125,8 @@ class AutomationTool:
         WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
         self._update_status("  > 資料已初步載入。")
         
-        all_data = []
+        # <<< 修改 1：改變資料儲存結構 >>>
+        all_pages_data = [] # 不再是 all_data，而是一個用來裝「每一頁列表」的列表
         page_count = 1
         item_list_container_xpath = "//div[contains(@class, 'list-items')]"
 
@@ -129,13 +135,10 @@ class AutomationTool:
             first_tracking_code_on_page = None
             
             try:
-                # 為了避免頁面為空，用一個 WebDriverWait 來獲取第一個項目
                 first_item_input_xpath = f"({item_list_container_xpath}/div[contains(@class, 'item')]//input)[1]"
                 first_input_element = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, first_item_input_xpath))
                 )
-                
-                # <<< 修改 1：獲取第一筆運送代碼作為刷新標記 >>>
                 first_tracking_code_on_page = first_input_element.get_property('value').strip()
                 self._update_status(f"  > 第 {page_count} 頁標記碼: '{first_tracking_code_on_page}'")
 
@@ -146,12 +149,13 @@ class AutomationTool:
                 self._update_status(f"  > 在第 {page_count} 頁未找到任何項目，抓取結束。")
                 break
 
+            # <<< 修改 2：每一頁都用獨立的列表儲存 >>>
+            single_page_data = [] # 儲存當前頁面資料的臨時列表
             for row in current_page_rows:
                 try:
                     shipping_method = row.find_element(By.XPATH, "./div[2]/div[3]").text.strip()
                     tracking_code_input = row.find_element(By.XPATH, "./div[2]/div[4]//input")
                     tracking_code = tracking_code_input.get_property('value').strip()
-                    
                     status = '正常'
                     try:
                         canceled_div = row.find_elements(By.XPATH, ".//div[contains(@class, 'm-pre-dot') and contains(text(), '已取消')]")
@@ -159,14 +163,20 @@ class AutomationTool:
                     except Exception: pass
                     
                     if shipping_method or tracking_code:
-                        all_data.append({
+                        single_page_data.append({ # 將資料加入當頁的臨時列表
                             "寄送方式": shipping_method, "主要運送代碼": tracking_code, "狀態": status
                         })
                 except Exception:
                     continue
             
-            self._update_status(f"  > 第 {page_count} 頁資料解析完畢。")
+            # 將當頁的臨時列表，整個加入到主列表中
+            all_pages_data.append(single_page_data)
 
+            # <<< 修改 3：增加詳細的日誌追蹤 >>>
+            total_items_collected = sum(len(page) for page in all_pages_data)
+            self._update_status(f"✅ 第 {page_count} 頁解析完畢。本頁 {len(single_page_data)} 筆，累計 {total_items_collected} 筆。")
+
+            # 翻頁邏輯保持不變
             try:
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button_element = driver.find_element(By.XPATH, next_button_xpath)
@@ -180,37 +190,24 @@ class AutomationTool:
                 next_button_element.click()
                 self._update_status(f"  > 已點擊「下一頁」，等待內容更新...")
 
-                # <<< 修改 2：使用自訂的 Lambda 等待條件 >>>
-                # 增加等待時間到 30 秒，應對較慢的頁面載入
                 wait = WebDriverWait(driver, 30)
                 wait.until(
-                    # 這個 lambda 函數會一直執行，直到新頁面第一個 input 的 value 不等於舊的標記碼
                     lambda d: d.find_element(By.XPATH, first_item_input_xpath).get_property('value').strip() != first_tracking_code_on_page
                 )
-                
-                self._update_status(f"✅ [成功] 第 {page_count + 1} 頁已成功載入！")
                 page_count += 1
 
-            except TimeoutException:
-                self._update_status("❌ 等待新頁面內容超時！抓取可能不完整。")
-                # <<< 新增：除錯截圖 >>>
-                try:
-                    screenshot_path = "wms_debug_screenshot.png"
-                    driver.save_screenshot(screenshot_path)
-                    self._update_status(f"📷 已儲存除錯截圖至: {screenshot_path}")
-                    st.warning(f"爬取過程超時，已自動截圖。請查看執行目錄下的 `{screenshot_path}` 檔案分析問題。")
-                except Exception as e:
-                    self._update_status(f"  > 儲存截圖失敗: {e}")
-                
-                self._update_status("  > 抓取結束。")
-                break
-            except (NoSuchElementException, Exception) as e:
-                self._update_status(f"  > 翻頁時發生錯誤 ({type(e).__name__})，抓取結束。")
+            except (TimeoutException, NoSuchElementException, Exception):
+                self._update_status(f"  > 翻頁條件未滿足或出錯，抓取結束。")
                 break
                 
-        self._update_status("  > 所有頁面資料抓取完畢。")
-        return all_data
+        self._update_status("  > 所有頁面資料抓取完畢，正在合併資料...")
 
+        # <<< 修改 4：將所有頁面的資料合併成一個最終列表 >>>
+        final_data = [item for page_list in all_pages_data for item in page_list]
+        total_final_items = len(final_data)
+        self._update_status(f"  > 資料合併完成，最終總筆數: {total_final_items}")
+        
+        return final_data
     # --- Main Execution Flow ---
     def run_wms_scrape(self, url, username, password):
         driver = None
@@ -428,6 +425,7 @@ if st.session_state.get('wms_scraping_done', False):
         else:
             st.info("沒有已取消的訂單。")
     # <<< CHANGE END >>>
+
 
 
 
