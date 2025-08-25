@@ -116,6 +116,11 @@ class AutomationTool:
 # ... (AutomationTool class 和其他方法保持不變) ...
 # =================================================================================
 
+    # =================================================================================
+# 核心爬蟲邏輯 (已修正架構)
+# ... (AutomationTool class 和其他方法保持不變) ...
+# =================================================================================
+
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
@@ -125,22 +130,25 @@ class AutomationTool:
         WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
         self._update_status("  > 資料已初步載入。")
         
-        # <<< 修改 1：改變資料儲存結構 >>>
-        all_pages_data = [] # 不再是 all_data，而是一個用來裝「每一頁列表」的列表
+        all_pages_data = []
         page_count = 1
         item_list_container_xpath = "//div[contains(@class, 'list-items')]"
-
+        
+        # <<< 新增：定義計數器標籤的XPATH >>>
+        # 這是我們用來判斷翻頁是否成功的關鍵 "路標"
+        counter_label_xpath = "(//div[contains(@class, 'item') and .//label[contains(@class, 'm-check')]])[1]//label[contains(@class, 'm-check')]"
+        
         while True:
             self._update_status(f"  > 準備抓取第 {page_count} 頁的資料...")
-            first_tracking_code_on_page = None
+            label_text_before_click = ""
             
             try:
-                first_item_input_xpath = f"({item_list_container_xpath}/div[contains(@class, 'item')]//input)[1]"
-                first_input_element = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, first_item_input_xpath))
+                # <<< 修改：獲取當前頁面的計數器文本作為標記 >>>
+                counter_label_element = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, counter_label_xpath))
                 )
-                first_tracking_code_on_page = first_input_element.get_property('value').strip()
-                self._update_status(f"  > 第 {page_count} 頁標記碼: '{first_tracking_code_on_page}'")
+                label_text_before_click = counter_label_element.text
+                self._update_status(f"  > 第 {page_count} 頁頁面標記: '{label_text_before_click.strip()}'")
 
                 current_page_rows = driver.find_elements(By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")
                 self._update_status(f"  > 找到 {len(current_page_rows)} 筆項目，開始解析...")
@@ -149,8 +157,8 @@ class AutomationTool:
                 self._update_status(f"  > 在第 {page_count} 頁未找到任何項目，抓取結束。")
                 break
 
-            # <<< 修改 2：每一頁都用獨立的列表儲存 >>>
-            single_page_data = [] # 儲存當前頁面資料的臨時列表
+            # 資料儲存邏輯 (保持不變)
+            single_page_data = []
             for row in current_page_rows:
                 try:
                     shipping_method = row.find_element(By.XPATH, "./div[2]/div[3]").text.strip()
@@ -163,20 +171,17 @@ class AutomationTool:
                     except Exception: pass
                     
                     if shipping_method or tracking_code:
-                        single_page_data.append({ # 將資料加入當頁的臨時列表
+                        single_page_data.append({
                             "寄送方式": shipping_method, "主要運送代碼": tracking_code, "狀態": status
                         })
                 except Exception:
                     continue
             
-            # 將當頁的臨時列表，整個加入到主列表中
             all_pages_data.append(single_page_data)
-
-            # <<< 修改 3：增加詳細的日誌追蹤 >>>
             total_items_collected = sum(len(page) for page in all_pages_data)
             self._update_status(f"✅ 第 {page_count} 頁解析完畢。本頁 {len(single_page_data)} 筆，累計 {total_items_collected} 筆。")
 
-            # 翻頁邏輯保持不變
+            # 翻頁邏輯
             try:
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button_element = driver.find_element(By.XPATH, next_button_xpath)
@@ -188,12 +193,16 @@ class AutomationTool:
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button_element)
                 time.sleep(0.2)
                 next_button_element.click()
-                self._update_status(f"  > 已點擊「下一頁」，等待內容更新...")
+                self._update_status(f"  > 已點擊「下一頁」，正在等待頁面標記更新...")
 
+                # <<< 核心修改：等待計數器標籤的文本發生變化 >>>
                 wait = WebDriverWait(driver, 30)
                 wait.until(
-                    lambda d: d.find_element(By.XPATH, first_item_input_xpath).get_property('value').strip() != first_tracking_code_on_page
+                    # 持續檢查頁面上的計數器標籤，直到它的文本不再等於我們翻頁前儲存的舊文本
+                    lambda d: d.find_element(By.XPATH, counter_label_xpath).text != label_text_before_click
                 )
+                
+                self._update_status(f"✅ [成功] 頁面標記已更新，第 {page_count + 1} 頁已載入！")
                 page_count += 1
 
             except (TimeoutException, NoSuchElementException, Exception):
@@ -201,8 +210,6 @@ class AutomationTool:
                 break
                 
         self._update_status("  > 所有頁面資料抓取完畢，正在合併資料...")
-
-        # <<< 修改 4：將所有頁面的資料合併成一個最終列表 >>>
         final_data = [item for page_list in all_pages_data for item in page_list]
         total_final_items = len(final_data)
         self._update_status(f"  > 資料合併完成，最終總筆數: {total_final_items}")
@@ -437,6 +444,7 @@ if st.session_state.get('wms_scraping_done', False):
         else:
             st.info("沒有已取消的訂單。")
     # <<< CHANGE END >>>
+
 
 
 
