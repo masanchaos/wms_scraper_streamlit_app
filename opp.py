@@ -56,7 +56,7 @@ def create_copy_button(text_to_copy: str, button_text: str, key: str):
     return components.html(button_html, height=45)
 
 # =================================================================================
-# 核心爬蟲邏輯 (已修正架構)
+# 核心爬蟲邏輯
 # =================================================================================
 class AutomationTool:
     def __init__(self, status_callback=None):
@@ -89,6 +89,7 @@ class AutomationTool:
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "page-container")))
         self._update_status("✅ [成功] WMS 登入完成！")
         time.sleep(3)
+        
     def _navigate_to_picking_complete(self, driver):
         self._update_status("  > 尋找導覽菜單...")
         picking_management_xpath = "//a[@href='/admin/pickup']"
@@ -101,49 +102,28 @@ class AutomationTool:
         WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
         self._update_status("✅ [成功] 已進入揀包完成頁面！")
 
-    # =================================================================================
-# 核心爬蟲邏輯 (已修正架構)
-# ... (AutomationTool class 和其他方法保持不變) ...
-# =================================================================================
-
-    # =================================================================================
-# 核心爬蟲邏輯 (已修正架構)
-# ... (AutomationTool class 和其他方法保持不變) ...
-# =================================================================================
-
-    # =================================================================================
-# 核心爬蟲邏輯 (已修正架構)
-# ... (AutomationTool class 和其他方法保持不變) ...
-# =================================================================================
-
-    # =================================================================================
-# 核心爬蟲邏輯 (已修正架構)
-# ... (AutomationTool class 和其他方法保持不變) ...
-# =================================================================================
-
     def _scrape_data(self, driver):
-        self._update_status("  > 點擊查詢按鈕以載入資料...")
+        self._update_status("  > 點擊查詢按鈕以載入資料...")
         query_button_xpath = "//div[contains(@class, 'btn-primary')]"
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
         
         loading_spinner_xpath = "//div[contains(@class, 'j-loading')]"
         WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
-        self._update_status("  > 資料已初步載入。")
+        self._update_status("  > 資料已初步載入。")
         
         all_pages_data = []
         page_count = 1
         item_list_container_xpath = "//div[contains(@class, 'list-items')]"
         
-        # <<< 新增：定義計數器標籤的XPATH >>>
-        # 這是我們用來判斷翻頁是否成功的關鍵 "路標"
+        # 定義計數器標籤的XPATH，用來判斷翻頁是否成功
         counter_label_xpath = "(//div[contains(@class, 'item') and .//label[contains(@class, 'm-check')]])[1]//label[contains(@class, 'm-check')]"
         
         while True:
-            self._update_status(f"  > 準備抓取第 {page_count} 頁的資料...")
+            self._update_status(f"  > 準備抓取第 {page_count} 頁的資料...")
             label_text_before_click = ""
             
             try:
-                # <<< 修改：獲取當前頁面的計數器文本作為標記 >>>
+                # 獲取當前頁面的計數器文本作為標記
                 counter_label_element = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, counter_label_xpath))
                 )
@@ -157,7 +137,7 @@ class AutomationTool:
                 self._update_status(f"  > 在第 {page_count} 頁未找到任何項目，抓取結束。")
                 break
 
-            # 資料儲存邏輯 (保持不變)
+            # 資料儲存邏輯
             single_page_data = []
             for row in current_page_rows:
                 try:
@@ -187,18 +167,17 @@ class AutomationTool:
                 next_button_element = driver.find_element(By.XPATH, next_button_xpath)
                 
                 if next_button_element.get_attribute('disabled'):
-                    self._update_status("  > 「下一頁」按鈕已禁用，抓取結束。")
+                    self._update_status("  > 「下一頁」按鈕已禁用，抓取結束。")
                     break
                 
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button_element)
                 time.sleep(0.2)
                 next_button_element.click()
-                self._update_status(f"  > 已點擊「下一頁」，正在等待頁面標記更新...")
+                self._update_status(f"  > 已點擊「下一頁」，正在等待頁面標記更新...")
 
-                # <<< 核心修改：等待計數器標籤的文本發生變化 >>>
+                # 等待計數器標籤的文本發生變化
                 wait = WebDriverWait(driver, 30)
                 wait.until(
-                    # 持續檢查頁面上的計數器標籤，直到它的文本不再等於我們翻頁前儲存的舊文本
                     lambda d: d.find_element(By.XPATH, counter_label_xpath).text != label_text_before_click
                 )
                 
@@ -206,15 +185,16 @@ class AutomationTool:
                 page_count += 1
 
             except (TimeoutException, NoSuchElementException, Exception):
-                self._update_status(f"  > 翻頁條件未滿足或出錯，抓取結束。")
+                self._update_status(f"  > 翻頁條件未滿足或出錯，抓取結束。")
                 break
                 
-        self._update_status("  > 所有頁面資料抓取完畢，正在合併資料...")
+        self._update_status("  > 所有頁面資料抓取完畢，正在合併資料...")
         final_data = [item for page_list in all_pages_data for item in page_list]
         total_final_items = len(final_data)
         self._update_status(f"  > 資料合併完成，最終總筆數: {total_final_items}")
         
         return final_data
+
     # --- Main Execution Flow ---
     def run_wms_scrape(self, url, username, password):
         driver = None
@@ -233,9 +213,6 @@ class AutomationTool:
 
 # =================================================================================
 # 資料處理與報告生成
-# =================================================================================
-# =================================================================================
-# 資料處理與報告生成 (邏輯修正版)
 # =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
     # 維持原樣，但在處理前移除 "狀態" 欄位，避免顯示
@@ -268,13 +245,12 @@ def process_and_output_data(df, status_callback):
     now = datetime.datetime.now(ZoneInfo("Asia/Taipei"))
     display_timestamp = now.strftime("%Y-%m-%d %H:%M")
 
-    status_callback("  > 拆分已取消與正常訂單...")
+    status_callback("  > 拆分已取消與正常訂單...")
     df_canceled = df[df['狀態'] == '已取消'].copy()
     df_processing = df[df['狀態'] != '已取消'].copy()
     
     # --- 優先處理「指定項目」和「711大物流」分類 ---
-    # 這部分邏輯只針對 df_processing (正常訂單)
-    status_callback("  > 細分正常訂單組...")
+    status_callback("  > 細分正常訂單組...")
     df_processing['主要運送代碼'] = df_processing['主要運送代碼'].astype(str)
     condition = (df_processing['寄送方式'] == '7-11') & (df_processing['主要運送代碼'].str.match(r'^\d', na=False))
     df_processing.loc[condition, '寄送方式'] = '711大物流'
@@ -290,10 +266,8 @@ def process_and_output_data(df, status_callback):
     df_filtered = df_processing_sorted[df_processing_sorted['寄送方式'].isin(default_methods)]
     
     # --- 處理「所有項目報告」 ---
-    # <<< 核心修改：df_sorted_all 現在基於最原始的 df (包含正常+取消) >>>
-    status_callback("  > 準備完整的總報告...")
+    status_callback("  > 準備完整的總報告...")
     all_methods = df['寄送方式'].unique().tolist()
-    # 我們可以沿用相同的優先級排序邏輯，讓報告整體風格一致
     final_order_all = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
     df['寄送方式'] = pd.Categorical(df['寄送方式'], categories=final_order_all, ordered=True)
     df_sorted_all = df.sort_values(by='寄送方式')
@@ -333,7 +307,7 @@ st.set_page_config(page_title="WMS 工具", page_icon="🚚", layout="wide")
 if 'wms_scraping_done' not in st.session_state: st.session_state.wms_scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
 if 'df_filtered' not in st.session_state: st.session_state.df_filtered = pd.DataFrame()
-if 'df_canceled' not in st.session_state: st.session_state.df_canceled = pd.DataFrame() # <<< 新增
+if 'df_canceled' not in st.session_state: st.session_state.df_canceled = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
 if 'duck_index' not in st.session_state: st.session_state.duck_index = 0
 
@@ -398,9 +372,19 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
 if st.session_state.get('wms_scraping_done', False):
     st.markdown("---")
     st.header("📊 WMS 擷取結果")
+
+    # --- 新增：檢查是否有已取消訂單，並準備提醒機制 ---
+    canceled_count = len(st.session_state.df_canceled)
     
-    # <<< CHANGE: 從 2 個分頁增加到 3 個 >>>
-    restab1, restab2, restab3 = st.tabs(["📊 指定項目報告", "📋 所有項目報告", "❌ 已取消訂單"])
+    # 1. 如果有取消訂單，顯示醒目的紅色警示框
+    if canceled_count > 0:
+        st.error(f"⚠️ 注意！偵測到 {canceled_count} 筆「已取消」的訂單，請務必確認！", icon="🚨")
+
+    # 2. 動態設定分頁標題：如果有取消訂單，標題會顯示數量
+    tab3_title = f"❌ 已取消訂單 ({canceled_count})" if canceled_count > 0 else "❌ 已取消訂單"
+
+    # 建立分頁 (使用新的動態標題)
+    restab1, restab2, restab3 = st.tabs(["📊 指定項目報告", "📋 所有項目報告", tab3_title])
     
     with restab1:
         st.subheader("指定項目統計與明細")
@@ -426,7 +410,6 @@ if st.session_state.get('wms_scraping_done', False):
                                file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
         st.text_area("報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed", key="text-all")
 
-    # <<< CHANGE START: 新增已取消訂單的分頁內容 >>>
     with restab3:
         st.subheader("已取消訂單統計與明細")
         if not st.session_state.df_canceled.empty:
@@ -443,10 +426,3 @@ if st.session_state.get('wms_scraping_done', False):
             st.text_area("報告內容", value=st.session_state.report_texts.get('canceled_full', '無資料'), height=500, label_visibility="collapsed", key="text-canceled")
         else:
             st.info("沒有已取消的訂單。")
-    # <<< CHANGE END >>>
-
-
-
-
-
-
