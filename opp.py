@@ -223,16 +223,40 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
         full_report = f"擷取時間: {display_timestamp} (台北時間)\n\n{summary}"
         return summary, full_report
     
-    summary_df = df_display.groupby('寄送方式', observed=False).size().reset_index(name='數量')
-    total_count = len(df_display)
-    max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
     summary_lines = ["==============================", f"=== {report_title} ===", "=============================="]
-    for _, row in summary_df.iterrows():
-        if row['數量'] > 0:
-            method_part = f"{row['寄送方式']}:"; count_part = str(row['數量'])
-            line = f"{method_part:<{max_len}} {count_part:>8}"
-            summary_lines.append(line)
-    summary_lines.append("------------------------------")
+    
+    # 判斷是否包含分組欄位，如果有則按分組呈現
+    if '分組' in df_display.columns:
+        group_order = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
+        df_display['分組'] = pd.Categorical(df_display['分組'], categories=group_order, ordered=True)
+        summary_df = df_display.groupby(['分組', '寄送方式'], observed=False).size().reset_index(name='數量')
+        
+        total_count = len(df_display)
+        max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
+        
+        current_group = None
+        for _, row in summary_df.iterrows():
+            if row['數量'] > 0:
+                if row['分組'] != current_group:
+                    current_group = row['分組']
+                    summary_lines.append(f"\n【{current_group}】")
+                
+                method_part = f"{row['寄送方式']}:"
+                count_part = str(row['數量'])
+                line = f"  {method_part:<{max_len}} {count_part:>8}"
+                summary_lines.append(line)
+    else:
+        summary_df = df_display.groupby('寄送方式', observed=False).size().reset_index(name='數量')
+        total_count = len(df_display)
+        max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
+        for _, row in summary_df.iterrows():
+            if row['數量'] > 0:
+                method_part = f"{row['寄送方式']}:"
+                count_part = str(row['數量'])
+                line = f"{method_part:<{max_len}} {count_part:>8}"
+                summary_lines.append(line)
+                
+    summary_lines.append("\n------------------------------")
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
     details_text = df_display.to_string(index=False)
@@ -255,14 +279,40 @@ def process_and_output_data(df, status_callback):
     condition = (df_processing['寄送方式'] == '7-11') & (df_processing['主要運送代碼'].str.match(r'^\d', na=False))
     df_processing.loc[condition, '寄送方式'] = '711大物流'
     
-    priority_order = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
+    # 定義新的分組與對應 (包含將 7-11 歸類到 711 以及將萊爾福校正為萊爾富)
+    group_mapping = {
+        '7-11': '第一組', '711大物流': '第一組', '全家': '第一組', '萊爾富': '第一組', '萊爾福': '第一組', 'OK': '第一組', '蝦皮店到店': '第一組',
+        '蝦皮隔日配': '第二組', '蝦皮店到家': '第二組',
+        '順豐特快': '第三組', '順豐國際': '第三組',
+        '黑貓': '第四組',
+        '新竹物流': '第五組'
+    }
+    
+    # 將分組映射寫入 DataFrame 中
+    df_processing['分組'] = df_processing['寄送方式'].map(group_mapping).fillna('其他')
+    df_canceled['分組'] = df_canceled['寄送方式'].map(group_mapping).fillna('其他')
+    df['分組'] = df['寄送方式'].map(group_mapping).fillna('其他')
+    
+    # 設定指定的順序
+    priority_order = [
+        '7-11', '711大物流', '全家', '萊爾富', '萊爾福', 'OK', '蝦皮店到店', 
+        '蝦皮隔日配', '蝦皮店到家', 
+        '順豐特快', '順豐國際', 
+        '黑貓', 
+        '新竹物流'
+    ]
+    
     processing_methods = df_processing['寄送方式'].unique().tolist()
     processing_order = [m for m in priority_order if m in processing_methods] + sorted([m for m in processing_methods if m not in priority_order])
     df_processing['寄送方式'] = pd.Categorical(df_processing['寄送方式'], categories=processing_order, ordered=True)
     
-    df_processing_sorted = df_processing.sort_values(by='寄送方式')
+    # 排序時先排「分組」，再排「寄送方式」
+    group_order = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
+    df_processing['分組'] = pd.Categorical(df_processing['分組'], categories=group_order, ordered=True)
+    df_processing_sorted = df_processing.sort_values(by=['分組', '寄送方式'])
     
-    default_methods = ['7-11', '711大物流', '全家', '萊爾富', 'OK', '蝦皮店到店', '蝦皮店到家']
+    # 指定項目現在涵蓋您所定義的 1~5 組
+    default_methods = priority_order
     df_filtered = df_processing_sorted[df_processing_sorted['寄送方式'].isin(default_methods)]
     
     # --- 處理「所有項目報告」 ---
@@ -270,7 +320,8 @@ def process_and_output_data(df, status_callback):
     all_methods = df['寄送方式'].unique().tolist()
     final_order_all = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
     df['寄送方式'] = pd.Categorical(df['寄送方式'], categories=final_order_all, ordered=True)
-    df_sorted_all = df.sort_values(by='寄送方式')
+    df['分組'] = pd.Categorical(df['分組'], categories=group_order, ordered=True)
+    df_sorted_all = df.sort_values(by=['分組', '寄送方式'])
 
     # --- 將處理好的資料存入 session_state ---
     st.session_state.df_filtered = df_filtered       # 指定項目 (從正常訂單篩選)
