@@ -75,7 +75,6 @@ class AutomationTool:
         driver.set_window_size(1920, 1080)
         return driver
 
-    # --- WMS Methods ---
     def _login_wms(self, driver, url, username, password):
         self._update_status("  > 正在前往 WMS 登入頁面...")
         driver.get(url)
@@ -114,8 +113,6 @@ class AutomationTool:
         all_pages_data = []
         page_count = 1
         item_list_container_xpath = "//div[contains(@class, 'list-items')]"
-        
-        # 定義計數器標籤的XPATH，用來判斷翻頁是否成功
         counter_label_xpath = "(//div[contains(@class, 'item') and .//label[contains(@class, 'm-check')]])[1]//label[contains(@class, 'm-check')]"
         
         while True:
@@ -123,21 +120,17 @@ class AutomationTool:
             label_text_before_click = ""
             
             try:
-                # 獲取當前頁面的計數器文本作為標記
                 counter_label_element = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, counter_label_xpath))
                 )
                 label_text_before_click = counter_label_element.text
                 self._update_status(f"  > 第 {page_count} 頁頁面標記: '{label_text_before_click.strip()}'")
-
                 current_page_rows = driver.find_elements(By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")
                 self._update_status(f"  > 找到 {len(current_page_rows)} 筆項目，開始解析...")
-
             except TimeoutException:
                 self._update_status(f"  > 在第 {page_count} 頁未找到任何項目，抓取結束。")
                 break
 
-            # 資料儲存邏輯
             single_page_data = []
             for row in current_page_rows:
                 try:
@@ -161,7 +154,6 @@ class AutomationTool:
             total_items_collected = sum(len(page) for page in all_pages_data)
             self._update_status(f"✅ 第 {page_count} 頁解析完畢。本頁 {len(single_page_data)} 筆，累計 {total_items_collected} 筆。")
 
-            # 翻頁邏輯
             try:
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button_element = driver.find_element(By.XPATH, next_button_xpath)
@@ -175,15 +167,10 @@ class AutomationTool:
                 next_button_element.click()
                 self._update_status(f"  > 已點擊「下一頁」，正在等待頁面標記更新...")
 
-                # 等待計數器標籤的文本發生變化
                 wait = WebDriverWait(driver, 30)
-                wait.until(
-                    lambda d: d.find_element(By.XPATH, counter_label_xpath).text != label_text_before_click
-                )
-                
+                wait.until(lambda d: d.find_element(By.XPATH, counter_label_xpath).text != label_text_before_click)
                 self._update_status(f"✅ [成功] 頁面標記已更新，第 {page_count + 1} 頁已載入！")
                 page_count += 1
-
             except (TimeoutException, NoSuchElementException, Exception):
                 self._update_status(f"  > 翻頁條件未滿足或出錯，抓取結束。")
                 break
@@ -195,7 +182,6 @@ class AutomationTool:
         
         return final_data
 
-    # --- Main Execution Flow ---
     def run_wms_scrape(self, url, username, password):
         driver = None
         try:
@@ -215,8 +201,8 @@ class AutomationTool:
 # 資料處理與報告生成
 # =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title):
-    # 維持原樣，但在處理前移除 "狀態" 欄位，避免顯示
-    df_display = df_to_process.drop(columns=['狀態'], errors='ignore')
+    # 強制隱藏「狀態」與「分組」欄位，讓明細更乾淨
+    df_display = df_to_process.drop(columns=['狀態', '分組'], errors='ignore')
 
     if df_display.empty:
         summary = f"--- {report_title} ---\n\n此分類下無資料。"
@@ -225,41 +211,23 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
     
     summary_lines = ["==============================", f"=== {report_title} ===", "=============================="]
     
-    # 判斷是否包含分組欄位，如果有則按分組呈現
-    if '分組' in df_display.columns:
-        group_order = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
-        df_display['分組'] = pd.Categorical(df_display['分組'], categories=group_order, ordered=True)
-        summary_df = df_display.groupby(['分組', '寄送方式'], observed=False).size().reset_index(name='數量')
-        
-        total_count = len(df_display)
-        max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
-        
-        current_group = None
-        for _, row in summary_df.iterrows():
-            if row['數量'] > 0:
-                if row['分組'] != current_group:
-                    current_group = row['分組']
-                    summary_lines.append(f"\n【{current_group}】")
-                
-                method_part = f"{row['寄送方式']}:"
-                count_part = str(row['數量'])
-                line = f"  {method_part:<{max_len}} {count_part:>8}"
-                summary_lines.append(line)
-    else:
-        summary_df = df_display.groupby('寄送方式', observed=False).size().reset_index(name='數量')
-        total_count = len(df_display)
-        max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
-        for _, row in summary_df.iterrows():
-            if row['數量'] > 0:
-                method_part = f"{row['寄送方式']}:"
-                count_part = str(row['數量'])
-                line = f"{method_part:<{max_len}} {count_part:>8}"
-                summary_lines.append(line)
+    # 單純以寄送方式計算數量
+    summary_df = df_display.groupby('寄送方式', observed=False).size().reset_index(name='數量')
+    total_count = len(df_display)
+    max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
+    
+    for _, row in summary_df.iterrows():
+        if row['數量'] > 0:
+            method_part = f"{row['寄送方式']}:"
+            count_part = str(row['數量'])
+            line = f"{method_part:<{max_len}} {count_part:>8}"
+            summary_lines.append(line)
                 
     summary_lines.append("\n------------------------------")
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
     details_text = df_display.to_string(index=False)
+    
     full_report_text = (f"擷取時間: {display_timestamp} (台北時間)\n\n{summary_text}\n\n"
                       "==============================\n======== 資 料 明 細 ========\n==============================\n\n"
                       f"{details_text}")
@@ -273,13 +241,11 @@ def process_and_output_data(df, status_callback):
     df_canceled = df[df['狀態'] == '已取消'].copy()
     df_processing = df[df['狀態'] != '已取消'].copy()
     
-    # --- 優先處理「指定項目」和「711大物流」分類 ---
     status_callback("  > 細分正常訂單組...")
     df_processing['主要運送代碼'] = df_processing['主要運送代碼'].astype(str)
     condition = (df_processing['寄送方式'] == '7-11') & (df_processing['主要運送代碼'].str.match(r'^\d', na=False))
     df_processing.loc[condition, '寄送方式'] = '711大物流'
     
-    # 定義新的分組與對應 (包含將 7-11 歸類到 711 以及將萊爾福校正為萊爾富)
     group_mapping = {
         '7-11': '第一組', '711大物流': '第一組', '全家': '第一組', '萊爾富': '第一組', '萊爾福': '第一組', 'OK': '第一組', '蝦皮店到店': '第一組',
         '蝦皮隔日配': '第二組', '蝦皮店到家': '第二組',
@@ -288,12 +254,11 @@ def process_and_output_data(df, status_callback):
         '新竹物流': '第五組'
     }
     
-    # 將分組映射寫入 DataFrame 中
+    # 將分組寫入 df
     df_processing['分組'] = df_processing['寄送方式'].map(group_mapping).fillna('其他')
     df_canceled['分組'] = df_canceled['寄送方式'].map(group_mapping).fillna('其他')
     df['分組'] = df['寄送方式'].map(group_mapping).fillna('其他')
     
-    # 設定指定的順序
     priority_order = [
         '7-11', '711大物流', '全家', '萊爾富', '萊爾福', 'OK', '蝦皮店到店', 
         '蝦皮隔日配', '蝦皮店到家', 
@@ -306,35 +271,27 @@ def process_and_output_data(df, status_callback):
     processing_order = [m for m in priority_order if m in processing_methods] + sorted([m for m in processing_methods if m not in priority_order])
     df_processing['寄送方式'] = pd.Categorical(df_processing['寄送方式'], categories=processing_order, ordered=True)
     
-    # 排序時先排「分組」，再排「寄送方式」
     group_order = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
     df_processing['分組'] = pd.Categorical(df_processing['分組'], categories=group_order, ordered=True)
     df_processing_sorted = df_processing.sort_values(by=['分組', '寄送方式'])
     
-    # 指定項目現在涵蓋您所定義的 1~5 組
-    default_methods = priority_order
-    df_filtered = df_processing_sorted[df_processing_sorted['寄送方式'].isin(default_methods)]
-    
-    # --- 處理「所有項目報告」 ---
-    status_callback("  > 準備完整的總報告...")
-    all_methods = df['寄送方式'].unique().tolist()
-    final_order_all = [m for m in priority_order if m in all_methods] + sorted([m for m in all_methods if m not in priority_order])
-    df['寄送方式'] = pd.Categorical(df['寄送方式'], categories=final_order_all, ordered=True)
-    df['分組'] = pd.Categorical(df['分組'], categories=group_order, ordered=True)
-    df_sorted_all = df.sort_values(by=['分組', '寄送方式'])
-
-    # --- 將處理好的資料存入 session_state ---
-    st.session_state.df_filtered = df_filtered       # 指定項目 (從正常訂單篩選)
-    st.session_state.final_df = df_sorted_all       # 所有項目 (原始完整資料)
-    st.session_state.df_canceled = df_canceled      # 已取消項目 (從原始資料篩選)
-
-    # --- 產生三份報告 ---
-    st.session_state.report_texts = {}
-    st.session_state.report_texts['filtered_full'] = generate_report_text(df_filtered, display_timestamp, "指定項目分組統計")[1]
-    st.session_state.report_texts['all_full'] = generate_report_text(df_sorted_all, display_timestamp, "所有項目分組統計")[1]
-    st.session_state.report_texts['canceled_full'] = generate_report_text(df_canceled, display_timestamp, "已取消項目統計")[1]
-    
+    st.session_state.final_df = df_processing_sorted
+    st.session_state.df_canceled = df_canceled
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
+    
+    # 預先生成各分組的報表
+    reports = {}
+    for g in group_order:
+        df_g = df_processing_sorted[df_processing_sorted['分組'] == g]
+        if not df_g.empty:
+            reports[g] = generate_report_text(df_g, display_timestamp, f"{g} 統計")[1]
+        else:
+            reports[g] = None
+            
+    reports['all'] = generate_report_text(df_processing_sorted, display_timestamp, "所有正常項目統計")[1]
+    reports['canceled'] = generate_report_text(df_canceled, display_timestamp, "已取消項目統計")[1]
+    
+    st.session_state.report_texts = reports
     status_callback("✅ 資料處理完成！")
 
 CREDENTIALS_FILE_WMS = "credentials_wms.json"
@@ -354,10 +311,8 @@ def clear_credentials(file_path):
 # =================================================================================
 
 st.set_page_config(page_title="WMS 工具", page_icon="🚚", layout="wide")
-# --- 初始化 session_state ---
 if 'wms_scraping_done' not in st.session_state: st.session_state.wms_scraping_done = False
 if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame()
-if 'df_filtered' not in st.session_state: st.session_state.df_filtered = pd.DataFrame()
 if 'df_canceled' not in st.session_state: st.session_state.df_canceled = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
 if 'duck_index' not in st.session_state: st.session_state.duck_index = 0
@@ -382,7 +337,6 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
     st.session_state.wms_scraping_done = False
     progress_text = st.empty(); progress_duck = st.empty()
     st.session_state.duck_index = 0
-    
     duck_images = ["duck_0.png", "duck_1.png", "duck_2.png", "duck_3.png", "duck_4.png"]
     
     def streamlit_callback(message):
@@ -392,7 +346,6 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
         elif "所有頁面資料抓取完畢" in message and st.session_state.duck_index < 3: st.session_state.duck_index = 3
         elif "資料處理完成" in message and st.session_state.duck_index < 4: st.session_state.duck_index = 4
         progress_text.info(f"{text}...")
-        
         if os.path.exists(duck_images[st.session_state.duck_index]):
             progress_duck.image(duck_images[st.session_state.duck_index])
 
@@ -415,7 +368,6 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
             else: 
                 progress_text.empty(); progress_duck.empty()
                 st.error("❌ 執行 WMS 任務時發生錯誤，請查看日誌。")
-
     except Exception as e:
         progress_text.empty(); progress_duck.empty()
         st.error(f"❌ 執行 WMS 任務時發生致命錯誤："); st.exception(e)
@@ -423,57 +375,65 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
 if st.session_state.get('wms_scraping_done', False):
     st.markdown("---")
     st.header("📊 WMS 擷取結果")
-
-    # --- 新增：檢查是否有已取消訂單，並準備提醒機制 ---
-    canceled_count = len(st.session_state.df_canceled)
     
-    # 1. 如果有取消訂單，顯示醒目的紅色警示框
+    # --- 自訂置頂文字區域 ---
+    custom_header = st.text_area("✍️ 置頂自訂文字 (只要有輸入，複製或下載任一頁面的報告時，都會自動加在最頂端)", 
+                                 value="", height=80, placeholder="例如：今日出貨請確認以下資料無誤...")
+    
+    canceled_count = len(st.session_state.df_canceled)
     if canceled_count > 0:
         st.error(f"⚠️ 注意！偵測到 {canceled_count} 筆「已取消」的訂單，請務必確認！", icon="🚨")
 
-    # 2. 動態設定分頁標題：如果有取消訂單，標題會顯示數量
-    tab3_title = f"❌ 已取消訂單 ({canceled_count})" if canceled_count > 0 else "❌ 已取消訂單"
-
-    # 建立分頁 (使用新的動態標題)
-    restab1, restab2, restab3 = st.tabs(["📊 指定項目報告", "📋 所有項目報告", tab3_title])
+    # 動態產生分頁
+    groups = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
+    tab_titles = groups + ["📋 所有項目", f"❌ 已取消訂單 ({canceled_count})" if canceled_count > 0 else "❌ 已取消訂單"]
+    tabs = st.tabs(tab_titles)
     
-    with restab1:
-        st.subheader("指定項目統計與明細")
-        col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
-        with col1: create_copy_button(st.session_state.report_texts.get('filtered_full', ''), "一鍵複製報告", key="copy-btn-filtered")
-        with col2:
-            st.download_button(label="下載 CSV (指定項目)", data=st.session_state.df_filtered.to_csv(index=False, encoding='utf-8-sig'),
-                               file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
-        with col3:
-            st.download_button(label="下載 TXT (指定項目)", data=st.session_state.report_texts.get('filtered_full', '').encode('utf-8'),
-                               file_name=f"picking_data_FILTERED_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
-        st.text_area("報告內容", value=st.session_state.report_texts.get('filtered_full', '無資料'), height=500, label_visibility="collapsed", key="text-filtered")
-        
-    with restab2:
-        st.subheader("所有項目統計與明細")
-        col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
-        with col1: create_copy_button(st.session_state.report_texts.get('all_full', ''), "一鍵複製報告", key="copy-btn-all")
-        with col2:
-            st.download_button(label="下載 CSV (所有資料)", data=st.session_state.final_df.to_csv(index=False, encoding='utf-8-sig'),
-                               file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
-        with col3:
-            st.download_button(label="下載 TXT (所有資料)", data=st.session_state.report_texts.get('all_full', '').encode('utf-8'),
-                               file_name=f"picking_data_ALL_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
-        st.text_area("報告內容", value=st.session_state.report_texts.get('all_full', '無資料'), height=500, label_visibility="collapsed", key="text-all")
-
-    with restab3:
-        st.subheader("已取消訂單統計與明細")
-        if not st.session_state.df_canceled.empty:
+    # 建立前6個分組的內容
+    for i, g in enumerate(groups):
+        with tabs[i]:
+            if st.session_state.report_texts.get(g):
+                df_g = st.session_state.final_df[st.session_state.final_df['分組'] == g]
+                raw_text = st.session_state.report_texts[g]
+                # 結合自訂置頂文字
+                combined_text = f"{custom_header}\n\n{raw_text}" if custom_header.strip() else raw_text
+                
+                col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
+                with col1: create_copy_button(combined_text, f"一鍵複製 {g} 報告", key=f"copy_{g}")
+                with col2:
+                    st.download_button("下載 CSV", df_g.drop(columns=['分組', '狀態'], errors='ignore').to_csv(index=False, encoding='utf-8-sig'), f"{g}_{st.session_state.file_timestamp}.csv", use_container_width=True)
+                with col3:
+                    st.download_button("下載 TXT", combined_text.encode('utf-8'), f"{g}_{st.session_state.file_timestamp}.txt", use_container_width=True)
+                st.text_area("預覽內容", value=combined_text, height=450, key=f"text_{g}", label_visibility="collapsed")
+            else:
+                st.info(f"{g} 目前無資料。")
+                
+    # 建立「所有項目」的內容
+    with tabs[6]:
+        raw_text = st.session_state.report_texts.get('all', '')
+        if raw_text:
+            combined_text = f"{custom_header}\n\n{raw_text}" if custom_header.strip() else raw_text
             col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
-            with col1: create_copy_button(st.session_state.report_texts.get('canceled_full', ''), "一鍵複製報告", key="copy-btn-canceled")
+            with col1: create_copy_button(combined_text, "一鍵複製所有項目", key="copy_all")
             with col2:
-                # 移除 "狀態" 欄位再下載
-                csv_data_canceled = st.session_state.df_canceled.drop(columns=['狀態'], errors='ignore').to_csv(index=False, encoding='utf-8-sig')
-                st.download_button(label="下載 CSV (已取消)", data=csv_data_canceled,
-                                   file_name=f"picking_data_CANCELED_{st.session_state.file_timestamp}.csv", mime='text/csv', use_container_width=True)
+                st.download_button("下載 CSV", st.session_state.final_df.drop(columns=['分組', '狀態'], errors='ignore').to_csv(index=False, encoding='utf-8-sig'), f"ALL_{st.session_state.file_timestamp}.csv", use_container_width=True)
             with col3:
-                st.download_button(label="下載 TXT (已取消)", data=st.session_state.report_texts.get('canceled_full', '').encode('utf-8'),
-                                   file_name=f"picking_data_CANCELED_{st.session_state.file_timestamp}.txt", mime='text/plain', use_container_width=True)
-            st.text_area("報告內容", value=st.session_state.report_texts.get('canceled_full', '無資料'), height=500, label_visibility="collapsed", key="text-canceled")
+                st.download_button("下載 TXT", combined_text.encode('utf-8'), f"ALL_{st.session_state.file_timestamp}.txt", use_container_width=True)
+            st.text_area("預覽內容", value=combined_text, height=450, key="text_all", label_visibility="collapsed")
+        else:
+            st.info("目前無資料。")
+
+    # 建立「已取消訂單」的內容
+    with tabs[7]:
+        if canceled_count > 0:
+            raw_text = st.session_state.report_texts.get('canceled', '')
+            combined_text = f"{custom_header}\n\n{raw_text}" if custom_header.strip() else raw_text
+            col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
+            with col1: create_copy_button(combined_text, "一鍵複製已取消", key="copy_canceled")
+            with col2:
+                st.download_button("下載 CSV", st.session_state.df_canceled.drop(columns=['分組', '狀態'], errors='ignore').to_csv(index=False, encoding='utf-8-sig'), f"CANCELED_{st.session_state.file_timestamp}.csv", use_container_width=True)
+            with col3:
+                st.download_button("下載 TXT", combined_text.encode('utf-8'), f"CANCELED_{st.session_state.file_timestamp}.txt", use_container_width=True)
+            st.text_area("預覽內容", value=combined_text, height=450, key="text_canceled", label_visibility="collapsed")
         else:
             st.info("沒有已取消的訂單。")
