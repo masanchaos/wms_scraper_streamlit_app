@@ -200,11 +200,19 @@ class AutomationTool:
 # =================================================================================
 # 資料處理與報告生成
 # =================================================================================
-def generate_report_text(df_to_process, display_timestamp, report_title):
-    # 強制隱藏「狀態」與「分組」欄位，讓明細更乾淨
-    df_display = df_to_process.drop(columns=['狀態', '分組'], errors='ignore')
+def generate_report_text(df_to_process, display_timestamp, report_title, show_status=False):
+    # 建立副本以避免改動原始資料
+    df_display = df_to_process.copy()
+    
+    # 決定要隱藏哪些欄位 (所有報告都不顯示「分組」)
+    cols_to_drop = ['分組']
+    if not show_status:
+        # 如果不是已取消訂單，則也隱藏「狀態」
+        cols_to_drop.append('狀態')
+        
+    df_display = df_display.drop(columns=[c for c in cols_to_drop if c in df_display.columns], errors='ignore')
 
-    if df_display.empty:
+    if df_display.empty or len(df_display) == 0:
         summary = f"--- {report_title} ---\n\n此分類下無資料。"
         full_report = f"擷取時間: {display_timestamp} (台北時間)\n\n{summary}"
         return summary, full_report
@@ -226,6 +234,8 @@ def generate_report_text(df_to_process, display_timestamp, report_title):
     summary_lines.append("\n------------------------------")
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
+    
+    # 將剩餘欄位（包含明細）轉換成文字印出
     details_text = df_display.to_string(index=False)
     
     full_report_text = (f"擷取時間: {display_timestamp} (台北時間)\n\n{summary_text}\n\n"
@@ -289,7 +299,9 @@ def process_and_output_data(df, status_callback):
             reports[g] = None
             
     reports['all'] = generate_report_text(df_processing_sorted, display_timestamp, "所有正常項目統計")[1]
-    reports['canceled'] = generate_report_text(df_canceled, display_timestamp, "已取消項目統計")[1]
+    
+    # 特別確保已取消訂單報表生成時，保留狀態欄位(show_status=True)
+    reports['canceled'] = generate_report_text(df_canceled, display_timestamp, "已取消項目統計", show_status=True)[1]
     
     st.session_state.report_texts = reports
     status_callback("✅ 資料處理完成！")
@@ -393,10 +405,10 @@ if st.session_state.get('wms_scraping_done', False):
     for i, g in enumerate(groups):
         with tabs[i]:
             if st.session_state.report_texts.get(g):
-                df_g = st.session_state.final_df[st.session_state.final_df['分組'] == g]
                 raw_text = st.session_state.report_texts[g]
-                # 結合自訂置頂文字
                 combined_text = f"{custom_header}\n\n{raw_text}" if custom_header.strip() else raw_text
+                
+                df_g = st.session_state.final_df[st.session_state.final_df['分組'] == g]
                 
                 col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
                 with col1: create_copy_button(combined_text, f"一鍵複製 {g} 報告", key=f"copy_{g}")
@@ -431,7 +443,8 @@ if st.session_state.get('wms_scraping_done', False):
             col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
             with col1: create_copy_button(combined_text, "一鍵複製已取消", key="copy_canceled")
             with col2:
-                st.download_button("下載 CSV", st.session_state.df_canceled.drop(columns=['分組', '狀態'], errors='ignore').to_csv(index=False, encoding='utf-8-sig'), f"CANCELED_{st.session_state.file_timestamp}.csv", use_container_width=True)
+                # 已取消訂單的 CSV 保留「狀態」欄位，讓資料更清楚
+                st.download_button("下載 CSV", st.session_state.df_canceled.drop(columns=['分組'], errors='ignore').to_csv(index=False, encoding='utf-8-sig'), f"CANCELED_{st.session_state.file_timestamp}.csv", use_container_width=True)
             with col3:
                 st.download_button("下載 TXT", combined_text.encode('utf-8'), f"CANCELED_{st.session_state.file_timestamp}.txt", use_container_width=True)
             st.text_area("預覽內容", value=combined_text, height=450, key="text_canceled", label_visibility="collapsed")
