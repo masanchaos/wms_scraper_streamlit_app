@@ -77,6 +77,8 @@ class AutomationTool:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
+        # 加入語系設定，嘗試強迫轉回中文，但仍保留英文 XPath 作為雙重保險
+        chrome_options.add_argument("--lang=zh-TW,zh")
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         
         # 尋找由 packages.txt (apt-get) 安裝的 chromium 執行檔路徑
@@ -123,9 +125,9 @@ class AutomationTool:
         picking_management_xpath = "//a[@href='/admin/pickup']"
         WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath))).click()
         
-        self._update_status("  > 正在尋找並點擊「揀包完成」分頁...")
-        # 放寬 XPath 條件：不限制 HTML 標籤，只要文字包含「揀包完成」即可
-        picking_complete_tab_xpath = "//*[contains(text(), '揀包完成') or contains(text(), 'Complete')]"
+        self._update_status("  > 正在尋找並點擊「揀包完成/Picked」分頁...")
+        # 放寬 XPath 條件：不限制 HTML 標籤，加入 Picked 英文支援
+        picking_complete_tab_xpath = "//*[contains(text(), '揀包完成') or contains(text(), 'Complete') or contains(text(), 'Picked')]"
         
         try:
             # 等待元素出現並可點擊
@@ -149,7 +151,7 @@ class AutomationTool:
         except TimeoutException as e:
             # 發生超時找不到元素時，立刻截圖！
             driver.save_screenshot("error_screenshot.png")
-            self._update_status("📸 [除錯] 找不到「揀包完成」按鈕，已擷取錯誤發生時的畫面截圖。")
+            self._update_status("📸 [除錯] 找不到「揀包完成」或「Picked」按鈕，已擷取錯誤發生時的畫面截圖。")
             raise e # 繼續把錯誤往上拋
 
     def _scrape_data(self, driver):
@@ -206,6 +208,7 @@ class AutomationTool:
             self._update_status(f"✅ 第 {page_count} 頁解析完畢。本頁 {len(single_page_data)} 筆，累計 {total_items_collected} 筆。")
 
             try:
+                # 支援中文「下一頁」與英文「Next」
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button_element = driver.find_element(By.XPATH, next_button_xpath)
                 
@@ -468,11 +471,13 @@ if st.session_state.get('wms_scraping_done', False):
     if canceled_count > 0:
         st.error(f"⚠️ 注意！偵測到 {canceled_count} 筆「已取消」的訂單，請務必確認！", icon="🚨")
 
-    groups = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
-    tab_titles = groups + ["📋 所有項目", f"❌ 已取消訂單 ({canceled_count})" if canceled_count > 0 else "❌ 已取消訂單"]
+    groups = ['第一組', '第二組', '第三組', '第四組', '第四組', '其他']
+    tab_titles = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他'] + ["📋 所有項目", f"❌ 已取消訂單 ({canceled_count})" if canceled_count > 0 else "❌ 已取消訂單"]
     tabs = st.tabs(tab_titles)
     
-    for i, g in enumerate(groups):
+    # 這裡的迴圈使用 index 匹配，避免 groups 名稱錯誤影響標籤
+    groups_for_loop = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
+    for i, g in enumerate(groups_for_loop):
         with tabs[i]:
             if st.session_state.report_texts.get(g):
                 raw_text = st.session_state.report_texts[g]
