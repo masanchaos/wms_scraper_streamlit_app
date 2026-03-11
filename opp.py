@@ -72,7 +72,7 @@ class AutomationTool:
 
     def _initialize_driver(self):
         chrome_options = Options()
-        chrome_options.add_argument("--headless=new") # 使用新版無頭模式
+        chrome_options.add_argument("--headless=new") 
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
@@ -80,16 +80,13 @@ class AutomationTool:
         chrome_options.add_argument("--lang=zh-TW,zh")
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         
-        # 尋找由 packages.txt (apt-get) 安裝的 chromium 執行檔路徑
         chrome_binary = which("chromium") or which("chromium-browser")
         if chrome_binary:
             chrome_options.binary_location = chrome_binary
             self._update_status(f"  > 找到 Chromium 路徑: {chrome_binary}")
 
         self._update_status("  > 正在初始化 WebDriver...")
-        
         try:
-            # 優先嘗試使用從 packages.txt 安裝的 chromium-driver
             chromedriver_path = which("chromedriver")
             if chromedriver_path:
                 self._update_status(f"  > 使用系統內建 ChromeDriver: {chromedriver_path}")
@@ -102,7 +99,6 @@ class AutomationTool:
         except Exception as e:
             self._update_status(f"❌ WebDriver 初始化失敗: {e}")
             raise e
-
         return driver
 
     def _login_wms(self, driver, url, username, password):
@@ -125,30 +121,28 @@ class AutomationTool:
         WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath))).click()
         
         self._update_status("  > 正在等待並切換至「揀包完成/Picked」分頁...")
-        # 等待一下讓右側畫面初步渲染
         time.sleep(3)
         
-        # 恢復使用最準確的 XPath：尋找帶有 btn class 且內容包含 Picked 或 揀包完成 的 div
-        picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Picked') or contains(., 'Complete'))]"
+        # ⚠️ 關鍵修正：確保包含 Picked 但排除 Unpicked！
+        picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or (contains(., 'Picked') and not(contains(., 'Unpicked'))) or contains(., 'Complete'))]"
         
         try:
             tab_element = WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.XPATH, picking_complete_tab_xpath))
             )
+            self._update_status(f"  > 成功找到分頁標籤，文字內容為: {tab_element.text}")
             
-            # 確保滾動到該分頁按鈕並點擊
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tab_element)
             time.sleep(1)
-            
-            # 使用 JS 點擊最保險
             driver.execute_script("arguments[0].click();", tab_element)
             
             self._update_status("✅ [成功] 已點擊揀包完成頁面！等待系統切換...")
-            # 強制等待系統切換 Tab（非常重要，避免點了立刻按查詢導致撈到上一個 Tab 的資料）
             time.sleep(3) 
             
+            # 拍一張除錯照片，證明真的有切換過去
+            driver.save_screenshot("debug_tab_switched.png")
+            
         except TimeoutException as e:
-            # 發生超時找不到元素時，立刻截圖！
             driver.save_screenshot("error_screenshot.png")
             self._update_status("📸 [除錯] 找不到「揀包完成」或「Picked」按鈕，已擷取錯誤發生時的畫面截圖。")
             raise e
@@ -207,7 +201,6 @@ class AutomationTool:
             self._update_status(f"✅ 第 {page_count} 頁解析完畢。本頁 {len(single_page_data)} 筆，累計 {total_items_collected} 筆。")
 
             try:
-                # 支援中文「下一頁」與英文「Next」
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
                 next_button_element = driver.find_element(By.XPATH, next_button_xpath)
                 
@@ -244,7 +237,6 @@ class AutomationTool:
             data = self._scrape_data(driver)
             return pd.DataFrame(data)
         except Exception as e:
-            # 將例外情況拋出給外部捕捉，這樣能記錄完整 traceback
             raise e
         finally:
             if driver: driver.quit()
@@ -398,7 +390,6 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
     if wms_remember: save_credentials(CREDENTIALS_FILE_WMS, wms_username, wms_password)
     else: clear_credentials(CREDENTIALS_FILE_WMS)
     
-    # 初始化狀態與清空 Log
     st.session_state.wms_scraping_done = False
     st.session_state.app_logs = [] 
     st.session_state.duck_index = 0
@@ -408,7 +399,6 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
     duck_images = ["duck_0.png", "duck_1.png", "duck_2.png", "duck_3.png", "duck_4.png"]
     
     def streamlit_callback(message):
-        # 同時寫入介面文字與系統日誌
         append_to_log(message)
         text = message.replace("  > ", "").replace("...", "")
         
@@ -445,18 +435,23 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
                 append_to_log("❌ 錯誤：回傳結果為 None。")
                 
     except Exception as e:
-        # 捕捉最詳細的錯誤追蹤碼並存入 Log
         error_traceback = traceback.format_exc()
         append_to_log(f"❌ 發生致命例外錯誤:\n{error_traceback}")
         progress_text.empty(); progress_duck.empty()
         st.error("❌ 執行 WMS 任務時發生致命錯誤，請查看最下方的「系統日誌」！")
         
-        # 檢查有沒有剛拍下來的截圖，有的話就顯示出來
         if os.path.exists("error_screenshot.png"):
-            st.warning("📸 以下是機器人當下看到的畫面：")
+            st.warning("📸 以下是出錯瞬間的畫面：")
             st.image("error_screenshot.png")
-            # 顯示完就刪掉，避免下次干擾
             os.remove("error_screenshot.png") 
+
+# =================================================================================
+# 顯示成功切換分頁的除錯截圖
+# =================================================================================
+if os.path.exists("debug_tab_switched.png"):
+    st.info("📸 [除錯輔助] 機器人切換分頁後的畫面（請確認是否有反白停留在「揀包完成/Picked」）：")
+    st.image("debug_tab_switched.png")
+    os.remove("debug_tab_switched.png")
 
 if st.session_state.get('wms_scraping_done', False):
     st.markdown("---")
@@ -469,11 +464,9 @@ if st.session_state.get('wms_scraping_done', False):
     if canceled_count > 0:
         st.error(f"⚠️ 注意！偵測到 {canceled_count} 筆「已取消」的訂單，請務必確認！", icon="🚨")
 
-    groups = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
     tab_titles = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他'] + ["📋 所有項目", f"❌ 已取消訂單 ({canceled_count})" if canceled_count > 0 else "❌ 已取消訂單"]
     tabs = st.tabs(tab_titles)
     
-    # 這裡的迴圈使用 index 匹配，避免 groups 名稱錯誤影響標籤
     groups_for_loop = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
     for i, g in enumerate(groups_for_loop):
         with tabs[i]:
