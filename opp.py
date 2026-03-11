@@ -127,7 +127,6 @@ class AutomationTool:
         self._update_status("  > 正在等待並準備切換至「揀包完成」分頁...")
         time.sleep(4) 
         
-        # 既然是純中文了，這行就是絕對精準的定位法！
         # 尋找 class 包含 btn，且其內部文字包含「揀包完成」的區塊
         picking_complete_tab_xpath = "//div[contains(@class, 'btn') and contains(., '揀包完成')]"
         
@@ -137,15 +136,18 @@ class AutomationTool:
             )
             self._update_status("  > 🎯 鎖定目標分頁：揀包完成！準備點擊...")
             
-            # 滾動並點擊
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tab_element)
             time.sleep(1)
-            driver.execute_script("arguments[0].click();", tab_element)
+            
+            # 優先使用標準點擊，若被擋住再用 JS 點擊 (確保框架狀態更新)
+            try:
+                tab_element.click()
+            except:
+                driver.execute_script("arguments[0].click();", tab_element)
             
             self._update_status("✅ [成功] 已點擊揀包完成頁面！等待系統載入資料...")
             time.sleep(4)
             
-            # 拍一張照片存證
             driver.save_screenshot("debug_tab_switched.png")
             
         except TimeoutException as e:
@@ -154,18 +156,20 @@ class AutomationTool:
             raise e
 
     def _scrape_data(self, driver):
-        self._update_status("  > 點擊查詢按鈕以載入資料...")
-        query_button_xpath = "//div[contains(@class, 'btn-primary')] | //button[contains(@class, 'btn-primary')]"
-        WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
+        # ⚠️ 關鍵修復 1：取消點擊查詢按鈕！避免網頁重置跳回「未揀訂單」
+        # self._update_status("  > 點擊查詢按鈕以載入資料...")
+        # query_button_xpath = "//div[contains(@class, 'btn-primary')] | //button[contains(@class, 'btn-primary')]"
+        # WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
         
         loading_spinner_xpath = "//div[contains(@class, 'j-loading')]"
         try:
-            WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
+            self._update_status("  > 等待資料表載入更新...")
+            WebDriverWait(driver, 15).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
         except:
-            pass # 如果沒有 loading 動畫就直接略過
+            pass 
             
         self._update_status("  > 資料已初步載入，開始解析。")
-        time.sleep(2) # 確保 DOM 渲染完畢
+        time.sleep(3) 
         
         all_pages_data = []
         page_count = 1
@@ -182,7 +186,7 @@ class AutomationTool:
                 )
                 label_text_before_click = counter_label_element.text
                 current_page_rows = driver.find_elements(By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")
-                self._update_status(f"  > 找到 {len(current_page_rows)} 筆項目...")
+                self._update_status(f"  > 找到 {len(current_page_rows)} 筆項目，正在智慧提取...")
             except TimeoutException:
                 self._update_status(f"  > 在第 {page_count} 頁未找到任何項目，抓取結束。")
                 break
@@ -190,25 +194,48 @@ class AutomationTool:
             single_page_data = []
             for row in current_page_rows:
                 try:
-                    shipping_method = row.find_element(By.XPATH, "./div[2]/div[3]").text.strip()
-                    tracking_code_input = row.find_element(By.XPATH, "./div[2]/div[4]//input")
-                    tracking_code = tracking_code_input.get_property('value').strip()
+                    # ⚠️ 關鍵修復 2：智能表格解析 (容許無 input 標籤或欄位平移)
+                    shipping_method = ""
+                    tracking_code = ""
+                    
+                    try:
+                        # 嘗試常規位置
+                        shipping_method = row.find_element(By.XPATH, "./div[2]/div[3]").text.strip()
+                        tracking_col = row.find_element(By.XPATH, "./div[2]/div[4]")
+                        inputs = tracking_col.find_elements(By.XPATH, ".//input")
+                        tracking_code = inputs[0].get_property('value').strip() if inputs else tracking_col.text.strip()
+                    except:
+                        pass
+                        
+                    # 如果常規位置沒抓到，可能是因為多了一個「揀包員」欄位導致平移，試著往右抓一格
+                    if not shipping_method and not tracking_code:
+                        try:
+                            shipping_method = row.find_element(By.XPATH, "./div[2]/div[4]").text.strip()
+                            tracking_col = row.find_element(By.XPATH, "./div[2]/div[5]")
+                            inputs = tracking_col.find_elements(By.XPATH, ".//input")
+                            tracking_code = inputs[0].get_property('value').strip() if inputs else tracking_col.text.strip()
+                        except:
+                            pass
+
                     status = '正常'
                     try:
                         canceled_div = row.find_elements(By.XPATH, ".//div[contains(@class, 'm-pre-dot') and contains(text(), '已取消')]")
                         if canceled_div: status = '已取消'
                     except Exception: pass
                     
+                    # 只要有抓到物流或追蹤碼，就當作有效資料
                     if shipping_method or tracking_code:
                         single_page_data.append({
                             "寄送方式": shipping_method, "主要運送代碼": tracking_code, "狀態": status
                         })
-                except Exception:
+                except Exception as e:
                     continue
             
             all_pages_data.append(single_page_data)
             total_items_collected = sum(len(page) for page in all_pages_data)
-            self._update_status(f"✅ 第 {page_count} 頁解析完畢。累計 {total_items_collected} 筆。")
+            
+            # ⚠️ 關鍵修復 3：詳細日誌，讓你知道到底漏抓了多少筆
+            self._update_status(f"✅ 第 {page_count} 頁解析完畢。畫面有 {len(current_page_rows)} 筆，成功提取 {len(single_page_data)} 筆。累計 {total_items_collected} 筆。")
 
             try:
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
