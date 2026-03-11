@@ -124,19 +124,25 @@ class AutomationTool:
         time.sleep(4) # 多等一下讓所有的 btn 都完整載入
         
         try:
-            # 必殺技：抓出畫面上所有可能是按鈕的元素
-            possible_tabs = driver.find_elements(By.XPATH, "//div[contains(@class, 'btn')] | //span[contains(@class, 'btn')] | //a")
+            # 擴大尋找範圍：把畫面上的 btn、a 標籤都找出來
+            possible_tabs = driver.find_elements(By.XPATH, "//*[contains(@class, 'btn')] | //a | //li")
             found_tab = None
             
-            self._update_status(f"  > 畫面中共找到 {len(possible_tabs)} 個可點擊元件，正在進行精確字串比對...")
+            self._update_status(f"  > 畫面中共找到 {len(possible_tabs)} 個可點擊元件，正在分析文字...")
             
             for tab in possible_tabs:
                 try:
                     text = tab.text.strip()
-                    # 只有「完全等於」這幾個字，才認定是正確的按鈕 (絕對不抓 Unpicked)
-                    if text in ["揀包完成", "Picked", "Complete"]:
+                    if not text:
+                        continue
+                        
+                    # 💡 終極邏輯：判斷是否包含目標字，且「絕對不能包含」Unpicked/未揀訂單
+                    has_target = ("揀包完成" in text) or ("Picked" in text) or ("Complete" in text)
+                    is_unpicked = ("未揀訂單" in text) or ("Unpicked" in text)
+                    
+                    if has_target and not is_unpicked:
                         found_tab = tab
-                        self._update_status(f"  > 🎯 鎖定目標分頁！精確匹配文字: '{text}'")
+                        self._update_status(f"  > 🎯 鎖定目標分頁！提取到的真實文字為: '{text}'")
                         break
                 except Exception:
                     continue
@@ -147,13 +153,13 @@ class AutomationTool:
                 driver.execute_script("arguments[0].click();", found_tab)
                 self._update_status("✅ [成功] 已點擊揀包完成頁面！等待系統載入資料...")
                 
-                # 點擊後，強制等待 4 秒，確保下面的表格資料真的刷新成了「揀包完成」的狀態
+                # 點擊後，強制等待 4 秒，確保下面的表格資料真的刷新
                 time.sleep(4)
                 
                 # 拍一張照片存證
                 driver.save_screenshot("debug_tab_switched.png")
             else:
-                raise TimeoutException("遍歷所有按鈕，依然找不到精確名稱為「揀包完成」或「Picked」的分頁籤")
+                raise TimeoutException("遍歷所有按鈕，依然找不到符合條件的分頁籤")
             
         except Exception as e:
             driver.save_screenshot("error_screenshot.png")
@@ -162,7 +168,6 @@ class AutomationTool:
 
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
-        # 有些系統切換分頁後，查詢按鈕可能會變更，用最寬鬆的 btn-primary
         query_button_xpath = "//div[contains(@class, 'btn-primary')] | //button[contains(@class, 'btn-primary')]"
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
         
