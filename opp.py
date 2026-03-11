@@ -122,13 +122,35 @@ class AutomationTool:
         self._update_status("  > 尋找導覽菜單...")
         picking_management_xpath = "//a[@href='/admin/pickup']"
         WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath))).click()
-        self._update_status("  > 正在等待分頁區塊載入...")
-        default_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '未揀訂單') or contains(., 'Unpicked'))]"
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, default_tab_xpath)))
-        self._update_status("  > 點擊「揀包完成」分頁按鈕...")
-        picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Complete'))]"
-        WebDriverWait(driver, 20).until(EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))).click()
-        self._update_status("✅ [成功] 已進入揀包完成頁面！")
+        
+        self._update_status("  > 正在尋找並點擊「揀包完成」分頁...")
+        # 放寬 XPath 條件：不限制 HTML 標籤，只要文字包含「揀包完成」即可
+        picking_complete_tab_xpath = "//*[contains(text(), '揀包完成') or contains(text(), 'Complete')]"
+        
+        try:
+            # 等待元素出現並可點擊
+            tab_element = WebDriverWait(driver, 20).until(
+                EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))
+            )
+            
+            # 將畫面滾動到該元素位置，避免被上方導覽列或彈出視窗擋住
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tab_element)
+            time.sleep(0.5) # 稍微等待滾動完成
+            
+            # 嘗試點擊
+            try:
+                tab_element.click()
+            except Exception:
+                # 如果一般點擊被擋住，改用 JavaScript 強制點擊
+                driver.execute_script("arguments[0].click();", tab_element)
+                
+            self._update_status("✅ [成功] 已進入揀包完成頁面！")
+            
+        except TimeoutException as e:
+            # 發生超時找不到元素時，立刻截圖！
+            driver.save_screenshot("error_screenshot.png")
+            self._update_status("📸 [除錯] 找不到「揀包完成」按鈕，已擷取錯誤發生時的畫面截圖。")
+            raise e # 繼續把錯誤往上拋
 
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
@@ -427,6 +449,13 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
         append_to_log(f"❌ 發生致命例外錯誤:\n{error_traceback}")
         progress_text.empty(); progress_duck.empty()
         st.error("❌ 執行 WMS 任務時發生致命錯誤，請查看最下方的「系統日誌」！")
+        
+        # 檢查有沒有剛拍下來的截圖，有的話就顯示出來
+        if os.path.exists("error_screenshot.png"):
+            st.warning("📸 以下是機器人當下看到的畫面：")
+            st.image("error_screenshot.png")
+            # 顯示完就刪掉，避免下次干擾
+            os.remove("error_screenshot.png") 
 
 if st.session_state.get('wms_scraping_done', False):
     st.markdown("---")
