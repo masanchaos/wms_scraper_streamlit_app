@@ -77,7 +77,11 @@ class AutomationTool:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--lang=zh-TW,zh")
+        
+        # 強制瀏覽器使用繁體中文
+        chrome_options.add_argument("--lang=zh-TW")
+        prefs = {"intl.accept_languages": "zh-TW,zh,zh-CN"}
+        chrome_options.add_experimental_option("prefs", prefs)
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         
         chrome_binary = which("chromium") or which("chromium-browser")
@@ -121,47 +125,30 @@ class AutomationTool:
         WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath))).click()
         
         self._update_status("  > 正在等待並準備切換至「揀包完成」分頁...")
-        time.sleep(4) # 多等一下讓所有的 btn 都完整載入
+        time.sleep(4) 
+        
+        # 既然是純中文了，這行就是絕對精準的定位法！
+        # 尋找 class 包含 btn，且其內部文字包含「揀包完成」的區塊
+        picking_complete_tab_xpath = "//div[contains(@class, 'btn') and contains(., '揀包完成')]"
         
         try:
-            # 擴大尋找範圍：把畫面上的 btn、a 標籤都找出來
-            possible_tabs = driver.find_elements(By.XPATH, "//*[contains(@class, 'btn')] | //a | //li")
-            found_tab = None
+            tab_element = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, picking_complete_tab_xpath))
+            )
+            self._update_status("  > 🎯 鎖定目標分頁：揀包完成！準備點擊...")
             
-            self._update_status(f"  > 畫面中共找到 {len(possible_tabs)} 個可點擊元件，正在分析文字...")
+            # 滾動並點擊
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tab_element)
+            time.sleep(1)
+            driver.execute_script("arguments[0].click();", tab_element)
             
-            for tab in possible_tabs:
-                try:
-                    text = tab.text.strip()
-                    if not text:
-                        continue
-                        
-                    # 💡 終極邏輯：判斷是否包含目標字，且「絕對不能包含」Unpicked/未揀訂單
-                    has_target = ("揀包完成" in text) or ("Picked" in text) or ("Complete" in text)
-                    is_unpicked = ("未揀訂單" in text) or ("Unpicked" in text)
-                    
-                    if has_target and not is_unpicked:
-                        found_tab = tab
-                        self._update_status(f"  > 🎯 鎖定目標分頁！提取到的真實文字為: '{text}'")
-                        break
-                except Exception:
-                    continue
+            self._update_status("✅ [成功] 已點擊揀包完成頁面！等待系統載入資料...")
+            time.sleep(4)
             
-            if found_tab:
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", found_tab)
-                time.sleep(1)
-                driver.execute_script("arguments[0].click();", found_tab)
-                self._update_status("✅ [成功] 已點擊揀包完成頁面！等待系統載入資料...")
-                
-                # 點擊後，強制等待 4 秒，確保下面的表格資料真的刷新
-                time.sleep(4)
-                
-                # 拍一張照片存證
-                driver.save_screenshot("debug_tab_switched.png")
-            else:
-                raise TimeoutException("遍歷所有按鈕，依然找不到符合條件的分頁籤")
+            # 拍一張照片存證
+            driver.save_screenshot("debug_tab_switched.png")
             
-        except Exception as e:
+        except TimeoutException as e:
             driver.save_screenshot("error_screenshot.png")
             self._update_status("📸 [除錯] 切換分頁失敗，已擷取錯誤發生時的畫面截圖。")
             raise e
