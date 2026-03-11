@@ -4,6 +4,8 @@ import datetime
 import time
 import json
 import os
+import traceback
+from shutil import which
 from zoneinfo import ZoneInfo
 import streamlit.components.v1 as components
 import html
@@ -11,9 +13,11 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 
 # =================================================================================
 # 自訂複製按鈕
@@ -61,18 +65,43 @@ def create_copy_button(text_to_copy: str, button_text: str, key: str):
 class AutomationTool:
     def __init__(self, status_callback=None):
         self.status_callback = status_callback
+
     def _update_status(self, message):
-        if self.status_callback: self.status_callback(message)
+        if self.status_callback: 
+            self.status_callback(message)
+
     def _initialize_driver(self):
         chrome_options = Options()
-        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--headless=new") # 使用新版無頭模式
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-        self._update_status("  > 初始化 WebDriver...")
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.set_window_size(1920, 1080)
+        
+        # 尋找由 packages.txt (apt-get) 安裝的 chromium 執行檔路徑
+        chrome_binary = which("chromium") or which("chromium-browser")
+        if chrome_binary:
+            chrome_options.binary_location = chrome_binary
+            self._update_status(f"  > 找到 Chromium 路徑: {chrome_binary}")
+
+        self._update_status("  > 正在初始化 WebDriver...")
+        
+        try:
+            # 優先嘗試使用從 packages.txt 安裝的 chromium-driver
+            chromedriver_path = which("chromedriver")
+            if chromedriver_path:
+                self._update_status(f"  > 使用系統內建 ChromeDriver: {chromedriver_path}")
+                service = Service(executable_path=chromedriver_path)
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+            else:
+                self._update_status("  > 未找到系統 ChromeDriver，啟動 webdriver_manager 自動下載...")
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+        except Exception as e:
+            self._update_status(f"❌ WebDriver 初始化失敗: {e}")
+            raise e
+
         return driver
 
     def _login_wms(self, driver, url, username, password):
@@ -192,8 +221,8 @@ class AutomationTool:
             data = self._scrape_data(driver)
             return pd.DataFrame(data)
         except Exception as e:
-            self._update_status(f"❌ WMS 抓取過程中發生錯誤: {e}")
-            return None
+            # 將例外情況拋出給外部捕捉，這樣能記錄完整 traceback
+            raise e
         finally:
             if driver: driver.quit()
 
@@ -201,13 +230,10 @@ class AutomationTool:
 # 資料處理與報告生成
 # =================================================================================
 def generate_report_text(df_to_process, display_timestamp, report_title, show_status=False):
-    # 建立副本以避免改動原始資料
     df_display = df_to_process.copy()
     
-    # 決定要隱藏哪些欄位 (所有報告都不顯示「分組」)
     cols_to_drop = ['分組']
     if not show_status:
-        # 如果不是已取消訂單，則也隱藏「狀態」
         cols_to_drop.append('狀態')
         
     df_display = df_display.drop(columns=[c for c in cols_to_drop if c in df_display.columns], errors='ignore')
@@ -219,7 +245,6 @@ def generate_report_text(df_to_process, display_timestamp, report_title, show_st
     
     summary_lines = ["==============================", f"=== {report_title} ===", "=============================="]
     
-    # 單純以寄送方式計算數量
     summary_df = df_display.groupby('寄送方式', observed=False).size().reset_index(name='數量')
     total_count = len(df_display)
     max_len = summary_df['寄送方式'].astype(str).str.len().max() + 2 if not summary_df.empty else 10
@@ -235,7 +260,6 @@ def generate_report_text(df_to_process, display_timestamp, report_title, show_st
     summary_lines.append(f"總計: {total_count}")
     summary_text = "\n".join(summary_lines)
     
-    # 將剩餘欄位（包含明細）轉換成文字印出
     details_text = df_display.to_string(index=False)
     
     full_report_text = (f"擷取時間: {display_timestamp} (台北時間)\n\n{summary_text}\n\n"
@@ -264,7 +288,6 @@ def process_and_output_data(df, status_callback):
         '新竹物流': '第五組'
     }
     
-    # 將分組寫入 df
     df_processing['分組'] = df_processing['寄送方式'].map(group_mapping).fillna('其他')
     df_canceled['分組'] = df_canceled['寄送方式'].map(group_mapping).fillna('其他')
     df['分組'] = df['寄送方式'].map(group_mapping).fillna('其他')
@@ -289,7 +312,6 @@ def process_and_output_data(df, status_callback):
     st.session_state.df_canceled = df_canceled
     st.session_state.file_timestamp = now.strftime("%y%m%d%H%M")
     
-    # 預先生成各分組的報表
     reports = {}
     for g in group_order:
         df_g = df_processing_sorted[df_processing_sorted['分組'] == g]
@@ -299,8 +321,6 @@ def process_and_output_data(df, status_callback):
             reports[g] = None
             
     reports['all'] = generate_report_text(df_processing_sorted, display_timestamp, "所有正常項目統計")[1]
-    
-    # 特別確保已取消訂單報表生成時，保留狀態欄位(show_status=True)
     reports['canceled'] = generate_report_text(df_canceled, display_timestamp, "已取消項目統計", show_status=True)[1]
     
     st.session_state.report_texts = reports
@@ -318,6 +338,14 @@ def save_credentials(file_path, username, password):
 def clear_credentials(file_path):
     if os.path.exists(file_path): os.remove(file_path)
 
+# 寫入 Log 到 session_state 的輔助函數
+def append_to_log(message):
+    timestamp = datetime.datetime.now(ZoneInfo("Asia/Taipei")).strftime("%H:%M:%S")
+    log_line = f"[{timestamp}] {message}"
+    if 'app_logs' not in st.session_state:
+        st.session_state.app_logs = []
+    st.session_state.app_logs.append(log_line)
+
 # =================================================================================
 # Streamlit 前端介面
 # =================================================================================
@@ -328,6 +356,7 @@ if 'final_df' not in st.session_state: st.session_state.final_df = pd.DataFrame(
 if 'df_canceled' not in st.session_state: st.session_state.df_canceled = pd.DataFrame()
 if 'report_texts' not in st.session_state: st.session_state.report_texts = {}
 if 'duck_index' not in st.session_state: st.session_state.duck_index = 0
+if 'app_logs' not in st.session_state: st.session_state.app_logs = []
 
 with st.sidebar:
     st.image("https://www.jenjan.com.tw/images/logo.svg", width=200)
@@ -346,17 +375,25 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
     if wms_remember: save_credentials(CREDENTIALS_FILE_WMS, wms_username, wms_password)
     else: clear_credentials(CREDENTIALS_FILE_WMS)
     
+    # 初始化狀態與清空 Log
     st.session_state.wms_scraping_done = False
-    progress_text = st.empty(); progress_duck = st.empty()
+    st.session_state.app_logs = [] 
     st.session_state.duck_index = 0
+    
+    progress_text = st.empty()
+    progress_duck = st.empty()
     duck_images = ["duck_0.png", "duck_1.png", "duck_2.png", "duck_3.png", "duck_4.png"]
     
     def streamlit_callback(message):
+        # 同時寫入介面文字與系統日誌
+        append_to_log(message)
         text = message.replace("  > ", "").replace("...", "")
+        
         if "登入完成" in message and st.session_state.duck_index < 1: st.session_state.duck_index = 1
         elif "進入揀包完成頁面" in message and st.session_state.duck_index < 2: st.session_state.duck_index = 2
         elif "所有頁面資料抓取完畢" in message and st.session_state.duck_index < 3: st.session_state.duck_index = 3
         elif "資料處理完成" in message and st.session_state.duck_index < 4: st.session_state.duck_index = 4
+        
         progress_text.info(f"{text}...")
         if os.path.exists(duck_images[st.session_state.duck_index]):
             progress_duck.image(duck_images[st.session_state.duck_index])
@@ -364,6 +401,7 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
     try:
         if not wms_username or not wms_password:
             st.error("❌ 請務必輸入 WMS 帳號和密碼！")
+            append_to_log("❌ 錯誤：未輸入帳號或密碼")
         else:
             streamlit_callback("準備開始... 🐣")
             tool = AutomationTool(status_callback=streamlit_callback)
@@ -377,18 +415,23 @@ if st.button("🚀 開始擷取 WMS 資料", type="primary", use_container_width
             elif result_df is not None and result_df.empty:
                 progress_text.empty(); progress_duck.empty()
                 st.warning("⚠️ WMS 抓取完成，但沒有收到任何資料。")
+                append_to_log("⚠️ 警告：抓取完成，但回傳資料為空。")
             else: 
                 progress_text.empty(); progress_duck.empty()
-                st.error("❌ 執行 WMS 任務時發生錯誤，請查看日誌。")
+                st.error("❌ 執行 WMS 任務時發生預期外錯誤。")
+                append_to_log("❌ 錯誤：回傳結果為 None。")
+                
     except Exception as e:
+        # 捕捉最詳細的錯誤追蹤碼並存入 Log
+        error_traceback = traceback.format_exc()
+        append_to_log(f"❌ 發生致命例外錯誤:\n{error_traceback}")
         progress_text.empty(); progress_duck.empty()
-        st.error(f"❌ 執行 WMS 任務時發生致命錯誤："); st.exception(e)
+        st.error("❌ 執行 WMS 任務時發生致命錯誤，請查看最下方的「系統日誌」！")
 
 if st.session_state.get('wms_scraping_done', False):
     st.markdown("---")
     st.header("📊 WMS 擷取結果")
     
-    # --- 自訂置頂文字區域 ---
     custom_header = st.text_area("✍️ 置頂自訂文字 (只要有輸入，複製或下載任一頁面的報告時，都會自動加在最頂端)", 
                                  value="", height=80, placeholder="例如：今日出貨請確認以下資料無誤...")
     
@@ -396,12 +439,10 @@ if st.session_state.get('wms_scraping_done', False):
     if canceled_count > 0:
         st.error(f"⚠️ 注意！偵測到 {canceled_count} 筆「已取消」的訂單，請務必確認！", icon="🚨")
 
-    # 動態產生分頁
     groups = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
     tab_titles = groups + ["📋 所有項目", f"❌ 已取消訂單 ({canceled_count})" if canceled_count > 0 else "❌ 已取消訂單"]
     tabs = st.tabs(tab_titles)
     
-    # 建立前6個分組的內容
     for i, g in enumerate(groups):
         with tabs[i]:
             if st.session_state.report_texts.get(g):
@@ -420,7 +461,6 @@ if st.session_state.get('wms_scraping_done', False):
             else:
                 st.info(f"{g} 目前無資料。")
                 
-    # 建立「所有項目」的內容
     with tabs[6]:
         raw_text = st.session_state.report_texts.get('all', '')
         if raw_text:
@@ -435,7 +475,6 @@ if st.session_state.get('wms_scraping_done', False):
         else:
             st.info("目前無資料。")
 
-    # 建立「已取消訂單」的內容
     with tabs[7]:
         if canceled_count > 0:
             raw_text = st.session_state.report_texts.get('canceled', '')
@@ -443,10 +482,21 @@ if st.session_state.get('wms_scraping_done', False):
             col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
             with col1: create_copy_button(combined_text, "一鍵複製已取消", key="copy_canceled")
             with col2:
-                # 已取消訂單的 CSV 保留「狀態」欄位，讓資料更清楚
                 st.download_button("下載 CSV", st.session_state.df_canceled.drop(columns=['分組'], errors='ignore').to_csv(index=False, encoding='utf-8-sig'), f"CANCELED_{st.session_state.file_timestamp}.csv", use_container_width=True)
             with col3:
                 st.download_button("下載 TXT", combined_text.encode('utf-8'), f"CANCELED_{st.session_state.file_timestamp}.txt", use_container_width=True)
             st.text_area("預覽內容", value=combined_text, height=450, key="text_canceled", label_visibility="collapsed")
         else:
             st.info("沒有已取消的訂單。")
+
+# =================================================================================
+# 系統日誌顯示區塊 (永遠顯示在最下方)
+# =================================================================================
+st.markdown("---")
+st.subheader("🛠️ 系統日誌 (Logs)")
+if st.session_state.app_logs:
+    full_log_text = "\n".join(st.session_state.app_logs)
+    create_copy_button(full_log_text, "📋 一鍵複製完整日誌以供除錯", key="copy_sys_logs")
+    st.text_area("日誌內容：", value=full_log_text, height=300, key="sys_log_area", label_visibility="collapsed")
+else:
+    st.info("目前尚無執行日誌。按下「開始擷取」後這裡會記錄所有系統狀態與錯誤。")
