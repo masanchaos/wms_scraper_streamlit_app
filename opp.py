@@ -77,7 +77,6 @@ class AutomationTool:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
-        # 加入語系設定，嘗試強迫轉回中文，但仍保留英文 XPath 作為雙重保險
         chrome_options.add_argument("--lang=zh-TW,zh")
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
         
@@ -125,34 +124,34 @@ class AutomationTool:
         picking_management_xpath = "//a[@href='/admin/pickup']"
         WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath))).click()
         
-        self._update_status("  > 正在尋找並點擊「揀包完成/Picked」分頁...")
-        # 放寬 XPath 條件：不限制 HTML 標籤，加入 Picked 英文支援
-        picking_complete_tab_xpath = "//*[contains(text(), '揀包完成') or contains(text(), 'Complete') or contains(text(), 'Picked')]"
+        self._update_status("  > 正在等待並切換至「揀包完成/Picked」分頁...")
+        # 等待一下讓右側畫面初步渲染
+        time.sleep(3)
+        
+        # 恢復使用最準確的 XPath：尋找帶有 btn class 且內容包含 Picked 或 揀包完成 的 div
+        picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or contains(., 'Picked') or contains(., 'Complete'))]"
         
         try:
-            # 等待元素出現並可點擊
             tab_element = WebDriverWait(driver, 20).until(
-                EC.element_to_be_clickable((By.XPATH, picking_complete_tab_xpath))
+                EC.presence_of_element_located((By.XPATH, picking_complete_tab_xpath))
             )
             
-            # 將畫面滾動到該元素位置，避免被上方導覽列或彈出視窗擋住
+            # 確保滾動到該分頁按鈕並點擊
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tab_element)
-            time.sleep(0.5) # 稍微等待滾動完成
+            time.sleep(1)
             
-            # 嘗試點擊
-            try:
-                tab_element.click()
-            except Exception:
-                # 如果一般點擊被擋住，改用 JavaScript 強制點擊
-                driver.execute_script("arguments[0].click();", tab_element)
-                
-            self._update_status("✅ [成功] 已進入揀包完成頁面！")
+            # 使用 JS 點擊最保險
+            driver.execute_script("arguments[0].click();", tab_element)
+            
+            self._update_status("✅ [成功] 已點擊揀包完成頁面！等待系統切換...")
+            # 強制等待系統切換 Tab（非常重要，避免點了立刻按查詢導致撈到上一個 Tab 的資料）
+            time.sleep(3) 
             
         except TimeoutException as e:
             # 發生超時找不到元素時，立刻截圖！
             driver.save_screenshot("error_screenshot.png")
             self._update_status("📸 [除錯] 找不到「揀包完成」或「Picked」按鈕，已擷取錯誤發生時的畫面截圖。")
-            raise e # 繼續把錯誤往上拋
+            raise e
 
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
@@ -242,7 +241,6 @@ class AutomationTool:
             driver = self._initialize_driver()
             self._login_wms(driver, url, username, password)
             self._navigate_to_picking_complete(driver)
-            time.sleep(2)
             data = self._scrape_data(driver)
             return pd.DataFrame(data)
         except Exception as e:
@@ -471,7 +469,7 @@ if st.session_state.get('wms_scraping_done', False):
     if canceled_count > 0:
         st.error(f"⚠️ 注意！偵測到 {canceled_count} 筆「已取消」的訂單，請務必確認！", icon="🚨")
 
-    groups = ['第一組', '第二組', '第三組', '第四組', '第四組', '其他']
+    groups = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他']
     tab_titles = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他'] + ["📋 所有項目", f"❌ 已取消訂單 ({canceled_count})" if canceled_count > 0 else "❌ 已取消訂單"]
     tabs = st.tabs(tab_titles)
     
