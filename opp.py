@@ -120,41 +120,60 @@ class AutomationTool:
         picking_management_xpath = "//a[@href='/admin/pickup']"
         WebDriverWait(driver, 30).until(EC.element_to_be_clickable((By.XPATH, picking_management_xpath))).click()
         
-        self._update_status("  > 正在等待並切換至「揀包完成/Picked」分頁...")
-        time.sleep(3)
-        
-        # ⚠️ 關鍵修正：確保包含 Picked 但排除 Unpicked！
-        picking_complete_tab_xpath = "//div[contains(@class, 'btn') and (contains(., '揀包完成') or (contains(., 'Picked') and not(contains(., 'Unpicked'))) or contains(., 'Complete'))]"
+        self._update_status("  > 正在等待並準備切換至「揀包完成」分頁...")
+        time.sleep(4) # 多等一下讓所有的 btn 都完整載入
         
         try:
-            tab_element = WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.XPATH, picking_complete_tab_xpath))
-            )
-            self._update_status(f"  > 成功找到分頁標籤，文字內容為: {tab_element.text}")
+            # 必殺技：抓出畫面上所有可能是按鈕的元素
+            possible_tabs = driver.find_elements(By.XPATH, "//div[contains(@class, 'btn')] | //span[contains(@class, 'btn')] | //a")
+            found_tab = None
             
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tab_element)
-            time.sleep(1)
-            driver.execute_script("arguments[0].click();", tab_element)
+            self._update_status(f"  > 畫面中共找到 {len(possible_tabs)} 個可點擊元件，正在進行精確字串比對...")
             
-            self._update_status("✅ [成功] 已點擊揀包完成頁面！等待系統切換...")
-            time.sleep(3) 
+            for tab in possible_tabs:
+                try:
+                    text = tab.text.strip()
+                    # 只有「完全等於」這幾個字，才認定是正確的按鈕 (絕對不抓 Unpicked)
+                    if text in ["揀包完成", "Picked", "Complete"]:
+                        found_tab = tab
+                        self._update_status(f"  > 🎯 鎖定目標分頁！精確匹配文字: '{text}'")
+                        break
+                except Exception:
+                    continue
             
-            # 拍一張除錯照片，證明真的有切換過去
-            driver.save_screenshot("debug_tab_switched.png")
+            if found_tab:
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", found_tab)
+                time.sleep(1)
+                driver.execute_script("arguments[0].click();", found_tab)
+                self._update_status("✅ [成功] 已點擊揀包完成頁面！等待系統載入資料...")
+                
+                # 點擊後，強制等待 4 秒，確保下面的表格資料真的刷新成了「揀包完成」的狀態
+                time.sleep(4)
+                
+                # 拍一張照片存證
+                driver.save_screenshot("debug_tab_switched.png")
+            else:
+                raise TimeoutException("遍歷所有按鈕，依然找不到精確名稱為「揀包完成」或「Picked」的分頁籤")
             
-        except TimeoutException as e:
+        except Exception as e:
             driver.save_screenshot("error_screenshot.png")
-            self._update_status("📸 [除錯] 找不到「揀包完成」或「Picked」按鈕，已擷取錯誤發生時的畫面截圖。")
+            self._update_status("📸 [除錯] 切換分頁失敗，已擷取錯誤發生時的畫面截圖。")
             raise e
 
     def _scrape_data(self, driver):
         self._update_status("  > 點擊查詢按鈕以載入資料...")
-        query_button_xpath = "//div[contains(@class, 'btn-primary')]"
+        # 有些系統切換分頁後，查詢按鈕可能會變更，用最寬鬆的 btn-primary
+        query_button_xpath = "//div[contains(@class, 'btn-primary')] | //button[contains(@class, 'btn-primary')]"
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, query_button_xpath))).click()
         
         loading_spinner_xpath = "//div[contains(@class, 'j-loading')]"
-        WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
-        self._update_status("  > 資料已初步載入。")
+        try:
+            WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.XPATH, loading_spinner_xpath)))
+        except:
+            pass # 如果沒有 loading 動畫就直接略過
+            
+        self._update_status("  > 資料已初步載入，開始解析。")
+        time.sleep(2) # 確保 DOM 渲染完畢
         
         all_pages_data = []
         page_count = 1
@@ -170,9 +189,8 @@ class AutomationTool:
                     EC.presence_of_element_located((By.XPATH, counter_label_xpath))
                 )
                 label_text_before_click = counter_label_element.text
-                self._update_status(f"  > 第 {page_count} 頁頁面標記: '{label_text_before_click.strip()}'")
                 current_page_rows = driver.find_elements(By.XPATH, f"{item_list_container_xpath}/div[contains(@class, 'item')]")
-                self._update_status(f"  > 找到 {len(current_page_rows)} 筆項目，開始解析...")
+                self._update_status(f"  > 找到 {len(current_page_rows)} 筆項目...")
             except TimeoutException:
                 self._update_status(f"  > 在第 {page_count} 頁未找到任何項目，抓取結束。")
                 break
@@ -198,7 +216,7 @@ class AutomationTool:
             
             all_pages_data.append(single_page_data)
             total_items_collected = sum(len(page) for page in all_pages_data)
-            self._update_status(f"✅ 第 {page_count} 頁解析完畢。本頁 {len(single_page_data)} 筆，累計 {total_items_collected} 筆。")
+            self._update_status(f"✅ 第 {page_count} 頁解析完畢。累計 {total_items_collected} 筆。")
 
             try:
                 next_button_xpath = "//button[normalize-space()='下一頁' or normalize-space()='Next']"
@@ -211,21 +229,17 @@ class AutomationTool:
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button_element)
                 time.sleep(0.2)
                 next_button_element.click()
-                self._update_status(f"  > 已點擊「下一頁」，正在等待頁面標記更新...")
+                self._update_status(f"  > 已點擊「下一頁」，正在等待頁面更新...")
 
                 wait = WebDriverWait(driver, 30)
                 wait.until(lambda d: d.find_element(By.XPATH, counter_label_xpath).text != label_text_before_click)
-                self._update_status(f"✅ [成功] 頁面標記已更新，第 {page_count + 1} 頁已載入！")
                 page_count += 1
             except (TimeoutException, NoSuchElementException, Exception):
-                self._update_status(f"  > 翻頁條件未滿足或出錯，抓取結束。")
+                self._update_status(f"  > 翻頁條件未滿足，抓取結束。")
                 break
                 
-        self._update_status("  > 所有頁面資料抓取完畢，正在合併資料...")
         final_data = [item for page_list in all_pages_data for item in page_list]
-        total_final_items = len(final_data)
-        self._update_status(f"  > 資料合併完成，最終總筆數: {total_final_items}")
-        
+        self._update_status(f"  > 所有資料抓取合併完成，最終總筆數: {len(final_data)}")
         return final_data
 
     def run_wms_scrape(self, url, username, password):
@@ -353,7 +367,6 @@ def save_credentials(file_path, username, password):
 def clear_credentials(file_path):
     if os.path.exists(file_path): os.remove(file_path)
 
-# 寫入 Log 到 session_state 的輔助函數
 def append_to_log(message):
     timestamp = datetime.datetime.now(ZoneInfo("Asia/Taipei")).strftime("%H:%M:%S")
     log_line = f"[{timestamp}] {message}"
@@ -457,12 +470,11 @@ if st.session_state.get('wms_scraping_done', False):
     st.markdown("---")
     st.header("📊 WMS 擷取結果")
     
-    custom_header = st.text_area("✍️ 置頂自訂文字 (只要有輸入，複製或下載任一頁面的報告時，都會自動加在最頂端)", 
-                                 value="", height=80, placeholder="例如：今日出貨請確認以下資料無誤...")
+    custom_header = st.text_area("✍️ 置頂自訂文字", value="", height=80)
     
     canceled_count = len(st.session_state.df_canceled)
     if canceled_count > 0:
-        st.error(f"⚠️ 注意！偵測到 {canceled_count} 筆「已取消」的訂單，請務必確認！", icon="🚨")
+        st.error(f"⚠️ 注意！偵測到 {canceled_count} 筆「已取消」的訂單！", icon="🚨")
 
     tab_titles = ['第一組', '第二組', '第三組', '第四組', '第五組', '其他'] + ["📋 所有項目", f"❌ 已取消訂單 ({canceled_count})" if canceled_count > 0 else "❌ 已取消訂單"]
     tabs = st.tabs(tab_titles)
@@ -515,7 +527,7 @@ if st.session_state.get('wms_scraping_done', False):
             st.info("沒有已取消的訂單。")
 
 # =================================================================================
-# 系統日誌顯示區塊 (永遠顯示在最下方)
+# 系統日誌顯示區塊
 # =================================================================================
 st.markdown("---")
 st.subheader("🛠️ 系統日誌 (Logs)")
@@ -523,5 +535,3 @@ if st.session_state.app_logs:
     full_log_text = "\n".join(st.session_state.app_logs)
     create_copy_button(full_log_text, "📋 一鍵複製完整日誌以供除錯", key="copy_sys_logs")
     st.text_area("日誌內容：", value=full_log_text, height=300, key="sys_log_area", label_visibility="collapsed")
-else:
-    st.info("目前尚無執行日誌。按下「開始擷取」後這裡會記錄所有系統狀態與錯誤。")
